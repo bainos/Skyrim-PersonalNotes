@@ -31,6 +31,41 @@ Implement the complete note input and persistence system. Users can press a hotk
 - **TR1.5:** SKSE serialization compatible
 - **TR1.6:** Verify Extended Vanilla Menus installed at runtime
 
+### Logging Requirements
+
+- **LR1.1:** Use spdlog with file-based logging
+- **LR1.2:** Log file: `Data/SKSE/Plugins/Logs/PersonalNotes.log`
+- **LR1.3:** Log level: `info` (flush on info)
+- **LR1.4:** Structured logging with prefixes (e.g., `[HOTKEY]`, `[NOTE]`, `[SAVE]`)
+- **LR1.5:** Log all major operations (hotkey press, note add, save/load)
+- **LR1.6:** Log errors clearly with context
+
+**Logging Pattern (from ENBNighteyeFix):**
+```cpp
+void SetupLog() {
+    auto path = SKSE::log::log_directory();
+    if (!path) return;
+
+    *path /= "PersonalNotes.log";
+    auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+        path->string(), true);
+
+    auto logger = std::make_shared<spdlog::logger>("log", std::move(sink));
+    logger->set_level(spdlog::level::info);
+    logger->flush_on(spdlog::level::info);
+
+    spdlog::set_default_logger(std::move(logger));
+    spdlog::info("PersonalNotes v1.0 initialized");
+}
+
+// Usage examples:
+spdlog::info("[HOTKEY] Insert key pressed");
+spdlog::info("[NOTE] Added note: '{}' | Context: '{}'", text, context);
+spdlog::info("[SAVE] Saving {} notes to co-save", count);
+spdlog::error("[ERROR] Failed to load Extended Vanilla Menus");
+spdlog::warn("[WARN] Note text exceeds max length, truncating");
+```
+
 ### Non-Requirements
 
 - No display functionality (Phase 2)
