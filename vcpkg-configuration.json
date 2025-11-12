@@ -1,0 +1,18 @@
+﻿{
+    "default-registry":  {
+                             "kind":  "git",
+                             "repository":  "https://github.com/Microsoft/vcpkg",
+                             "baseline":  "9a98f93671f984351377044210854900bfd73171"
+                         },
+    "registries":  [
+                       {
+                           "kind":  "git",
+                           "repository":  "https://github.com/bainos/commonlibsse-ng-ae-vcpkg.git",
+                           "baseline":  "e2924f20a084a1666e911b0c719c7b672d19bd3f",
+                           "packages":  [
+                                            "commonlibsse-ng-ae",
+                                            "enb-api"
+                                        ]
+                       }
+                   ]
+}
