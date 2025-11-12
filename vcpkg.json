@@ -1,10 +1,8 @@
 {
-  "name": "bainosnighteyefix",
+  "name": "personalnotes",
   "version": "1.0.0",
   "dependencies": [
     "commonlibsse-ng-ae",
-    "spdlog",
-    "iniparser",
-    "enb-api"
+    "spdlog"
   ]
 }
