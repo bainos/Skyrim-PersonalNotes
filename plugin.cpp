@@ -124,6 +124,65 @@ public:
         return notes_.size();
     }
 
+    std::string GetNoteText(size_t index) const {
+        std::shared_lock lock(lock_);
+        if (index >= notes_.size()) {
+            spdlog::warn("[ACCESS] GetNoteText: Invalid index {} (size: {})", index, notes_.size());
+            return "";
+        }
+        return notes_[index].text;
+    }
+
+    std::string GetNoteContext(size_t index) const {
+        std::shared_lock lock(lock_);
+        if (index >= notes_.size()) {
+            spdlog::warn("[ACCESS] GetNoteContext: Invalid index {} (size: {})", index, notes_.size());
+            return "";
+        }
+        return notes_[index].context;
+    }
+
+    std::time_t GetNoteTimestamp(size_t index) const {
+        std::shared_lock lock(lock_);
+        if (index >= notes_.size()) {
+            spdlog::warn("[ACCESS] GetNoteTimestamp: Invalid index {} (size: {})", index, notes_.size());
+            return 0;
+        }
+        return notes_[index].timestamp;
+    }
+
+    std::string FormatTimestamp(std::time_t timestamp) const {
+        if (timestamp == 0) {
+            return "";
+        }
+        std::tm* tm = std::localtime(&timestamp);
+        char buffer[32];
+        std::strftime(buffer, sizeof(buffer), "%m/%d %H:%M", tm);
+        return std::string(buffer);
+    }
+
+    bool DeleteNote(size_t index) {
+        std::unique_lock lock(lock_);
+
+        if (index >= notes_.size()) {
+            spdlog::warn("[DELETE] Invalid index: {} (size: {})", index, notes_.size());
+            return false;
+        }
+
+        // Get preview before deleting
+        std::string preview = notes_[index].text;
+        if (preview.length() > 30) {
+            preview = preview.substr(0, 30) + "...";
+        }
+
+        notes_.erase(notes_.begin() + index);
+
+        spdlog::info("[DELETE] Deleted note at index {}: '{}' | Remaining: {}",
+            index, preview, notes_.size());
+
+        return true;
+    }
+
     void Save(SKSE::SerializationInterface* intfc) {
         std::shared_lock lock(lock_);
 
@@ -201,6 +260,7 @@ private:
 
 namespace PapyrusBridge {
     void RequestTextInput();
+    void ShowNotesList();
 }
 
 //=============================================================================
@@ -246,6 +306,10 @@ public:
             if (buttonEvent->idCode == 51) {
                 OnHotkeyPressed();
             }
+            // Check for dot key (scan code 0x34 = 52)
+            else if (buttonEvent->idCode == 52) {
+                OnViewNotesHotkey();
+            }
         }
 
         return RE::BSEventNotifyControl::kContinue;
@@ -261,10 +325,23 @@ private:
             return;
         }
 
-        spdlog::info("[HOTKEY] Insert key pressed");
+        spdlog::info("[HOTKEY] Comma key pressed - adding note");
 
         // Trigger Papyrus text input
         PapyrusBridge::RequestTextInput();
+    }
+
+    void OnViewNotesHotkey() {
+        // Don't trigger if console or menu is open
+        auto ui = RE::UI::GetSingleton();
+        if (ui && (ui->IsMenuOpen(RE::Console::MENU_NAME) || ui->GameIsPaused())) {
+            return;
+        }
+
+        spdlog::info("[HOTKEY] Dot key pressed - viewing notes");
+
+        // Trigger Papyrus note list
+        PapyrusBridge::ShowNotesList();
     }
 };
 
@@ -323,10 +400,90 @@ namespace PapyrusBridge {
         spdlog::info("[PAPYRUS] RequestInput dispatched");
     }
 
+    // Show notes list (called from C++ InputHandler)
+    void ShowNotesList() {
+        spdlog::info("[PAPYRUS] Showing notes list...");
+
+        auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!vm) {
+            spdlog::error("[PAPYRUS] Failed to get VM");
+            return;
+        }
+
+        // Call PersonalNotes.ShowNotesList()
+        auto args = RE::MakeFunctionArguments();
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+
+        vm->DispatchStaticCall("PersonalNotes", "ShowNotesList", args, callback);
+        spdlog::info("[PAPYRUS] ShowNotesList dispatched");
+    }
+
+    // Get note count
+    std::int32_t GetNoteCount(RE::StaticFunctionTag*) {
+        auto count = NoteManager::GetSingleton()->GetNoteCount();
+        spdlog::info("[PAPYRUS] GetNoteCount called: {}", count);
+        return static_cast<std::int32_t>(count);
+    }
+
+    // Get note text by index
+    RE::BSFixedString GetNoteText(RE::StaticFunctionTag*, std::int32_t index) {
+        if (index < 0) {
+            spdlog::warn("[PAPYRUS] GetNoteText: Negative index {}, clamping to 0", index);
+            index = 0;
+        }
+
+        auto text = NoteManager::GetSingleton()->GetNoteText(static_cast<size_t>(index));
+        return RE::BSFixedString(text);
+    }
+
+    // Get note context by index
+    RE::BSFixedString GetNoteContext(RE::StaticFunctionTag*, std::int32_t index) {
+        if (index < 0) {
+            spdlog::warn("[PAPYRUS] GetNoteContext: Negative index {}, clamping to 0", index);
+            index = 0;
+        }
+
+        auto context = NoteManager::GetSingleton()->GetNoteContext(static_cast<size_t>(index));
+        return RE::BSFixedString(context);
+    }
+
+    // Get note timestamp by index (formatted as string)
+    RE::BSFixedString GetNoteTimestamp(RE::StaticFunctionTag*, std::int32_t index) {
+        if (index < 0) {
+            spdlog::warn("[PAPYRUS] GetNoteTimestamp: Negative index {}, clamping to 0", index);
+            index = 0;
+        }
+
+        auto mgr = NoteManager::GetSingleton();
+        auto timestamp = mgr->GetNoteTimestamp(static_cast<size_t>(index));
+        auto formatted = mgr->FormatTimestamp(timestamp);
+        return RE::BSFixedString(formatted);
+    }
+
+    // Delete note by index
+    void DeleteNote(RE::StaticFunctionTag*, std::int32_t index) {
+        if (index < 0) {
+            spdlog::warn("[PAPYRUS] DeleteNote: Negative index {}, ignoring", index);
+            return;
+        }
+
+        bool success = NoteManager::GetSingleton()->DeleteNote(static_cast<size_t>(index));
+        if (success) {
+            spdlog::info("[PAPYRUS] DeleteNote succeeded for index {}", index);
+        } else {
+            spdlog::warn("[PAPYRUS] DeleteNote failed for index {}", index);
+        }
+    }
+
     // Register native functions
     bool Register(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("OnNoteReceived", "PersonalNotesNative", OnNoteReceived);
-        spdlog::info("[PAPYRUS] Native functions registered");
+        vm->RegisterFunction("GetNoteCount", "PersonalNotesNative", GetNoteCount);
+        vm->RegisterFunction("GetNoteText", "PersonalNotesNative", GetNoteText);
+        vm->RegisterFunction("GetNoteContext", "PersonalNotesNative", GetNoteContext);
+        vm->RegisterFunction("GetNoteTimestamp", "PersonalNotesNative", GetNoteTimestamp);
+        vm->RegisterFunction("DeleteNote", "PersonalNotesNative", DeleteNote);
+        spdlog::info("[PAPYRUS] All native functions registered (6 total)");
         return true;
     }
 }

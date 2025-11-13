@@ -1,3 +1,18 @@
+# Get the directory this script is running from
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+
+# Path to the other script
+$DeployScript = Join-Path $ScriptDir 'deploy.ps1'
+
+# Run deploy.ps1 if it exists
+if (Test-Path $DeployScript) {
+    Write-Host "Running pre-deploy script: $DeployScript" -ForegroundColor Cyan
+    & $DeployScript
+    Write-Host "Pre-deploy script completed." -ForegroundColor Green
+} else {
+    Write-Host "Warning: deploy.ps1 not found in $ScriptDir" -ForegroundColor Yellow
+}
+
 # PersonalNotes - Package mod for distribution
 
 $ErrorActionPreference = "Stop"

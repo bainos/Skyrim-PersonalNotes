@@ -1,0 +1,176 @@
+================================================================================
+EXECUTIVE SUMMARY: Quest Detection in Journal Menu
+================================================================================
+
+GOAL: Detect which quest is currently viewed in Journal Menu when hotkey pressed
+
+FINDING: YES - HIGHLY FEASIBLE
+
+Available APIs in CommonLibSSE-NG allow detection through multiple methods with 
+varying complexity and reliability levels.
+
+================================================================================
+CRITICAL DISCOVERIES
+================================================================================
+
+1. JournalMenu Class (VERY HIGH Feasibility)
+   Location: /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/J/JournalMenu.h
+   Line: 18-97
+   
+   Access: UI::GetSingleton()->GetMenu<RE::JournalMenu>()
+   Contains: Journal_QuestsTab which holds quest UI data
+   
+   Code Pattern:
+     auto ui = RE::UI::GetSingleton();
+     auto journalMenu = ui->GetMenu<RE::JournalMenu>();
+     if (journalMenu) { /* Have menu instance */ }
+
+2. Scaleform UI Variables (HIGH Feasibility)
+   Location: /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/G/GFxMovie.h
+   Line: 11-77
+   
+   Methods: GetVariable(), GetVariableArray(), GetVariableArraySize()
+   Access: journalMenu->uiMovie->GetVariable(&val, "path")
+   
+   Example: Getting selected quest index
+     GFxValue selectedIndex;
+     journalMenu->uiMovie->GetVariable(&selectedIndex, 
+       "_level0.JournalMenu.selectedIndex");
+     int index = (int)selectedIndex.GetNumber();
+
+3. TESQuest Lookup (VERY HIGH Feasibility)
+   Location: /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/T/TESQuest.h
+   Line: 186-284
+   
+   Once you have quest FormID:
+     TESQuest* quest = RE::TESForm::LookupByID<RE::TESQuest>(formID);
+     const char* name = quest->GetName();
+     FormID id = quest->GetFormID();
+     bool active = quest->IsActive();
+
+4. UI Singleton Access (VERY HIGH Feasibility)
+   Location: /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/U/UI.h
+   Line: 79-123
+   
+   Methods: UI::GetSingleton(), GetMenu<T>(), IsMenuOpen(), GetMovieView()
+   
+   These are standard patterns used throughout all menus in the engine.
+
+================================================================================
+RECOMMENDED IMPLEMENTATION
+================================================================================
+
+STEP 1: Get Menu Instance
+   auto ui = RE::UI::GetSingleton();
+   auto journalMenu = ui->GetMenu<RE::JournalMenu>();
+   if (!journalMenu) return nullptr;
+
+STEP 2: Verify Menu is Open and Has UI
+   auto movieView = journalMenu->uiMovie;
+   if (!movieView) return nullptr;
+
+STEP 3: Query Selected Quest (requires SWF path discovery)
+   RE::GFxValue questID;
+   if (movieView->GetVariable(&questID, "[SCALEFORM_PATH]")) {
+       // Have quest form ID
+   }
+
+STEP 4: Lookup Quest Data
+   FormID id = (FormID)questID.GetNumber();
+   TESQuest* quest = RE::TESForm::LookupByID<RE::TESQuest>(id);
+   if (quest) {
+       logger::info("Current quest: {} (0x{:X})", 
+                   quest->GetName(), quest->GetFormID());
+   }
+
+================================================================================
+CHALLENGES & SOLUTIONS
+================================================================================
+
+Challenge: Unknown Scaleform variable paths
+Status: SOLVABLE - Requires SWF decompilation
+Tools: JPEXS Free Flash Decompiler, debugger with memory inspection
+Timeline: 1-2 hours for path discovery
+
+Challenge: Journal_QuestsTab has unknown members (unk18, unk30, etc.)
+Status: WORKAROUND AVAILABLE - Use Scaleform API instead of direct access
+Alternative: Query through GFxValue interface, no reverse engineering needed
+
+Challenge: Different offsets for SE/AE/VR versions
+Status: HANDLED - Code uses REL::RelocateMember for version abstraction
+No action needed: CommonLibSSE-NG handles all version differences
+
+================================================================================
+FEASIBILITY RATING SUMMARY
+================================================================================
+
+Method                          | Feasibility | Effort | Reliability
+====================================================================
+UI::GetSingleton()              | VERY HIGH   | LOW    | VERY HIGH
+GetMenu<JournalMenu>()          | VERY HIGH   | LOW    | VERY HIGH
+Query Scaleform Variables       | HIGH        | HIGH   | HIGH
+TESQuest::LookupByID()          | VERY HIGH   | LOW    | VERY HIGH
+Direct struct member access     | HIGH        | MEDIUM | HIGH
+====================================================================
+
+Overall Feasibility: VERY HIGH - Implementation likely within 2-4 hours once
+                     Scaleform paths are discovered through SWF analysis
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Immediate (1-2 hours):
+   - Extract Journal menu SWF from Skyrim/Data/Interface/
+   - Decompile with JPEXS to find quest list variable names
+   - Document Scaleform variable paths
+
+2. Development (2-4 hours):
+   - Write test SKSE plugin with hotkey hook
+   - Implement basic quest detection using discovered paths
+   - Add error handling and logging
+
+3. Testing (1-2 hours):
+   - Test with various quest states
+   - Verify works across menu navigation
+   - Confirm works when multiple quests visible
+
+4. Optimization (optional):
+   - Cache menu pointer between frames
+   - Consider polling vs. event-based approach
+   - Profile performance impact
+
+================================================================================
+FILES INVOLVED
+================================================================================
+
+Core Implementation Files:
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/J/JournalMenu.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/J/Journal_QuestsTab.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/U/UI.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/G/GFxMovie.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/G/GFxValue.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/T/TESForm.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/T/TESQuest.h
+
+Reference Patterns:
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/I/ItemList.h
+  - /mnt/c/dev/Skyrim-Modding/CommonLibSSE-NG/include/RE/B/BarterMenu.h
+
+================================================================================
+CONCLUSION
+================================================================================
+
+YES - WE CAN DETECT CURRENT QUEST IN JOURNAL MENU
+
+Multiple viable approaches exist with high reliability. The main unknown is the
+exact Scaleform variable paths, which can be discovered through SWF analysis
+(standard modding practice). Once paths are known, implementation is 
+straightforward and follows established CommonLibSSE-NG patterns used 
+throughout the codebase for similar UI interactions.
+
+Estimated total effort: 4-8 hours from start to working implementation
+Risk level: LOW
+Recommendation: PROCEED with Scaleform path discovery phase
+
+================================================================================
