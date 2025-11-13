@@ -13,6 +13,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <shared_mutex>
 #include <ctime>
 
@@ -23,13 +24,18 @@
 struct Note {
     std::string text;
     std::time_t timestamp;
-    std::string context;
+    RE::FormID questID;
 
-    Note() : timestamp(0) {}
-    Note(const std::string& t, const std::string& c)
-        : text(t), timestamp(std::time(nullptr)), context(c) {}
+    Note() : timestamp(0), questID(0) {}
+    Note(const std::string& t, RE::FormID qid)
+        : text(t), timestamp(std::time(nullptr)), questID(qid) {}
 
     bool Save(SKSE::SerializationInterface* intfc) const {
+        // Write quest ID
+        if (!intfc->WriteRecordData(&questID, sizeof(questID))) {
+            return false;
+        }
+
         // Write text length and text
         std::uint32_t textLen = static_cast<std::uint32_t>(text.size());
         if (!intfc->WriteRecordData(&textLen, sizeof(textLen))) {
@@ -44,19 +50,15 @@ struct Note {
             return false;
         }
 
-        // Write context length and context
-        std::uint32_t contextLen = static_cast<std::uint32_t>(context.size());
-        if (!intfc->WriteRecordData(&contextLen, sizeof(contextLen))) {
-            return false;
-        }
-        if (contextLen > 0 && !intfc->WriteRecordData(context.data(), contextLen)) {
-            return false;
-        }
-
         return true;
     }
 
     bool Load(SKSE::SerializationInterface* intfc) {
+        // Read quest ID
+        if (!intfc->ReadRecordData(&questID, sizeof(questID))) {
+            return false;
+        }
+
         // Read text
         std::uint32_t textLen = 0;
         if (!intfc->ReadRecordData(&textLen, sizeof(textLen))) {
@@ -74,18 +76,6 @@ struct Note {
             return false;
         }
 
-        // Read context
-        std::uint32_t contextLen = 0;
-        if (!intfc->ReadRecordData(&contextLen, sizeof(contextLen))) {
-            return false;
-        }
-        if (contextLen > 0) {
-            context.resize(contextLen);
-            if (!intfc->ReadRecordData(context.data(), contextLen)) {
-                return false;
-            }
-        }
-
         return true;
     }
 };
@@ -97,106 +87,82 @@ struct Note {
 class NoteManager {
 public:
     static constexpr std::uint32_t kDataKey = 'PNOT';  // PersonalNOTes
-    static constexpr std::uint32_t kSerializationVersion = 1;
+    static constexpr std::uint32_t kSerializationVersion = 2;
 
     static NoteManager* GetSingleton() {
         static NoteManager instance;
         return &instance;
     }
 
-    void AddNote(const std::string& text, const std::string& context) {
-        std::unique_lock lock(lock_);
+    std::string GetNoteForQuest(RE::FormID questID) const {
+        std::shared_lock lock(lock_);
 
-        Note note(text, context);
-        notes_.push_back(note);
-
-        spdlog::info("[NOTE] Added: '{}' | Context: '{}' | Total: {}",
-            text, context, notes_.size());
+        auto it = notesByQuest_.find(questID);
+        if (it != notesByQuest_.end()) {
+            return it->second.text;
+        }
+        return "";
     }
 
-    std::vector<Note> GetAllNotes() const {
+    void SaveNoteForQuest(RE::FormID questID, const std::string& text) {
+        std::unique_lock lock(lock_);
+
+        if (text.empty()) {
+            // Empty text = delete note
+            notesByQuest_.erase(questID);
+            spdlog::info("[NOTE] Deleted note for quest 0x{:X}", questID);
+        } else {
+            Note note(text, questID);
+            notesByQuest_[questID] = note;
+            spdlog::info("[NOTE] Saved note for quest 0x{:X}: '{}' | Total: {}",
+                questID, text, notesByQuest_.size());
+        }
+    }
+
+    bool HasNoteForQuest(RE::FormID questID) const {
         std::shared_lock lock(lock_);
-        return notes_;
+        return notesByQuest_.find(questID) != notesByQuest_.end();
+    }
+
+    void DeleteNoteForQuest(RE::FormID questID) {
+        std::unique_lock lock(lock_);
+
+        auto it = notesByQuest_.find(questID);
+        if (it != notesByQuest_.end()) {
+            std::string preview = it->second.text;
+            if (preview.length() > 30) {
+                preview = preview.substr(0, 30) + "...";
+            }
+            notesByQuest_.erase(it);
+            spdlog::info("[NOTE] Deleted note for quest 0x{:X}: '{}' | Remaining: {}",
+                questID, preview, notesByQuest_.size());
+        }
+    }
+
+    std::unordered_map<RE::FormID, Note> GetAllNotes() const {
+        std::shared_lock lock(lock_);
+        return notesByQuest_;
     }
 
     size_t GetNoteCount() const {
         std::shared_lock lock(lock_);
-        return notes_.size();
-    }
-
-    std::string GetNoteText(size_t index) const {
-        std::shared_lock lock(lock_);
-        if (index >= notes_.size()) {
-            spdlog::warn("[ACCESS] GetNoteText: Invalid index {} (size: {})", index, notes_.size());
-            return "";
-        }
-        return notes_[index].text;
-    }
-
-    std::string GetNoteContext(size_t index) const {
-        std::shared_lock lock(lock_);
-        if (index >= notes_.size()) {
-            spdlog::warn("[ACCESS] GetNoteContext: Invalid index {} (size: {})", index, notes_.size());
-            return "";
-        }
-        return notes_[index].context;
-    }
-
-    std::time_t GetNoteTimestamp(size_t index) const {
-        std::shared_lock lock(lock_);
-        if (index >= notes_.size()) {
-            spdlog::warn("[ACCESS] GetNoteTimestamp: Invalid index {} (size: {})", index, notes_.size());
-            return 0;
-        }
-        return notes_[index].timestamp;
-    }
-
-    std::string FormatTimestamp(std::time_t timestamp) const {
-        if (timestamp == 0) {
-            return "";
-        }
-        std::tm* tm = std::localtime(&timestamp);
-        char buffer[32];
-        std::strftime(buffer, sizeof(buffer), "%m/%d %H:%M", tm);
-        return std::string(buffer);
-    }
-
-    bool DeleteNote(size_t index) {
-        std::unique_lock lock(lock_);
-
-        if (index >= notes_.size()) {
-            spdlog::warn("[DELETE] Invalid index: {} (size: {})", index, notes_.size());
-            return false;
-        }
-
-        // Get preview before deleting
-        std::string preview = notes_[index].text;
-        if (preview.length() > 30) {
-            preview = preview.substr(0, 30) + "...";
-        }
-
-        notes_.erase(notes_.begin() + index);
-
-        spdlog::info("[DELETE] Deleted note at index {}: '{}' | Remaining: {}",
-            index, preview, notes_.size());
-
-        return true;
+        return notesByQuest_.size();
     }
 
     void Save(SKSE::SerializationInterface* intfc) {
         std::shared_lock lock(lock_);
 
         // Write note count
-        std::uint32_t count = static_cast<std::uint32_t>(notes_.size());
+        std::uint32_t count = static_cast<std::uint32_t>(notesByQuest_.size());
         if (!intfc->WriteRecordData(&count, sizeof(count))) {
             spdlog::error("[SAVE] Failed to write note count");
             return;
         }
 
         // Write each note
-        for (const auto& note : notes_) {
+        for (const auto& [questID, note] : notesByQuest_) {
             if (!note.Save(intfc)) {
-                spdlog::error("[SAVE] Failed to write note");
+                spdlog::error("[SAVE] Failed to write note for quest 0x{:X}", questID);
                 return;
             }
         }
@@ -206,7 +172,7 @@ public:
 
     void Load(SKSE::SerializationInterface* intfc) {
         std::unique_lock lock(lock_);
-        notes_.clear();
+        notesByQuest_.clear();
 
         std::uint32_t type;
         std::uint32_t version;
@@ -214,6 +180,10 @@ public:
 
         while (intfc->GetNextRecordInfo(type, version, length)) {
             if (type == kDataKey) {
+                if (version == 1) {
+                    spdlog::warn("[LOAD] Version 1 save data found (Phase 1/2). Not compatible with Phase 3 quest notes. Skipping.");
+                    continue;
+                }
                 if (version != kSerializationVersion) {
                     spdlog::warn("[LOAD] Unknown version: {}", version);
                     continue;
@@ -230,27 +200,27 @@ public:
                 for (std::uint32_t i = 0; i < count; ++i) {
                     Note note;
                     if (note.Load(intfc)) {
-                        notes_.push_back(note);
+                        notesByQuest_[note.questID] = note;
                     } else {
                         spdlog::error("[LOAD] Failed to load note {}", i);
                     }
                 }
 
-                spdlog::info("[LOAD] Loaded {} notes", notes_.size());
+                spdlog::info("[LOAD] Loaded {} notes", notesByQuest_.size());
             }
         }
     }
 
     void Revert(SKSE::SerializationInterface*) {
         std::unique_lock lock(lock_);
-        notes_.clear();
+        notesByQuest_.clear();
         spdlog::info("[REVERT] Cleared all notes (new game)");
     }
 
 private:
     NoteManager() = default;
 
-    std::vector<Note> notes_;
+    std::unordered_map<RE::FormID, Note> notesByQuest_;
     mutable std::shared_mutex lock_;
 };
 
@@ -259,8 +229,152 @@ private:
 //=============================================================================
 
 namespace PapyrusBridge {
-    void RequestTextInput();
-    void ShowNotesList();
+    void ShowQuestNoteInput(RE::FormID questID);
+}
+
+//=============================================================================
+// Journal Quest Detection
+//=============================================================================
+
+RE::FormID GetCurrentQuestInJournal() {
+    auto ui = RE::UI::GetSingleton();
+    if (!ui || !ui->IsMenuOpen("Journal Menu")) {
+        return 0;  // Not in journal
+    }
+
+    auto journalMenu = ui->GetMenu<RE::JournalMenu>();
+    if (!journalMenu) {
+        spdlog::warn("[JOURNAL] Failed to get JournalMenu pointer");
+        return 0;
+    }
+
+    spdlog::info("[JOURNAL] === STARTING QUEST DETECTION ===");
+
+    // METHOD 1: Direct struct access - questsTab.unk18
+    spdlog::info("[JOURNAL] METHOD 1: Accessing questsTab.unk18...");
+    auto& rtData = journalMenu->GetRuntimeData();
+    auto& questsTab = rtData.questsTab;
+
+    if (questsTab.unk18.IsObject()) {
+        spdlog::info("[JOURNAL] questsTab.unk18 IS an Object - testing members...");
+
+        // Try all possible member names exhaustively
+        const char* memberNames[] = {
+            // Properties from SWF dump
+            "selectedQuestID", "selectedQuestInstance",
+            // Underscore variants
+            "_selectedQuestID", "_selectedQuestInstance",
+            // List components
+            "TitleList", "TitleList_mc", "List_mc", "CategoryList_mc",
+            // Text fields
+            "DescriptionText", "QuestTitleText", "questDescriptionText", "questTitleText",
+            // Data holders
+            "entryList", "selectedEntry", "selectedIndex",
+            // Boolean flags
+            "bHasMiscQuests", "bUpdated",
+            // Other
+            "_parent", "_bottomBar", "BottomBar_mc"
+        };
+
+        for (const char* name : memberNames) {
+            RE::GFxValue member;
+            if (questsTab.unk18.GetMember(name, &member)) {
+                std::string typeStr =
+                    member.IsNumber() ? "Number" :
+                    member.IsString() ? "String" :
+                    member.IsObject() ? "Object" :
+                    member.IsArray() ? "Array" :
+                    member.IsBool() ? "Bool" :
+                    member.IsUndefined() ? "Undefined" : "Unknown";
+
+                spdlog::info("[JOURNAL] FOUND member '{}' type={}", name, typeStr);
+
+                // If Number, check if it's a quest ID
+                if (member.IsNumber()) {
+                    RE::FormID id = static_cast<RE::FormID>(member.GetUInt());
+                    if (id > 0) {
+                        spdlog::info("[JOURNAL] SUCCESS! Found quest 0x{:X} at questsTab.unk18.{}", id, name);
+                        return id;
+                    } else {
+                        spdlog::info("[JOURNAL] Member '{}' is Number but value is 0", name);
+                    }
+                } else if (member.IsObject()) {
+                    // Drill deeper into objects
+                    const char* subMembers[] = {"selectedQuestID", "selectedIndex", "formID", "selectedEntry"};
+                    for (const char* subName : subMembers) {
+                        RE::GFxValue subMember;
+                        if (member.GetMember(subName, &subMember)) {
+                            std::string subTypeStr = subMember.IsNumber() ? "Number" :
+                                subMember.IsObject() ? "Object" : "Other";
+                            spdlog::info("[JOURNAL] FOUND submember '{}.{}' type={}", name, subName, subTypeStr);
+
+                            if (subMember.IsNumber()) {
+                                RE::FormID id = static_cast<RE::FormID>(subMember.GetUInt());
+                                if (id > 0) {
+                                    spdlog::info("[JOURNAL] SUCCESS! Found quest 0x{:X} at questsTab.unk18.{}.{}", id, name, subName);
+                                    return id;
+                                } else {
+                                    spdlog::info("[JOURNAL] Submember '{}.{}' is Number but value is 0", name, subName);
+                                }
+                            }
+                        } else {
+                            spdlog::info("[JOURNAL] Submember '{}.{}' not found", name, subName);
+                        }
+                    }
+                }
+            } else {
+                spdlog::info("[JOURNAL] Member '{}' not found", name);
+            }
+        }
+        spdlog::info("[JOURNAL] METHOD 1: No quest ID found in questsTab.unk18");
+    } else {
+        spdlog::warn("[JOURNAL] questsTab.unk18 is NOT an Object!");
+    }
+
+    // METHOD 2: Scaleform path access via uiMovie
+    spdlog::info("[JOURNAL] METHOD 2: Trying Scaleform paths...");
+    if (!journalMenu->uiMovie) {
+        spdlog::warn("[JOURNAL] uiMovie is null!");
+        return 0;
+    }
+
+    const char* paths[] = {
+        // Based on List_mc from dump
+        "QuestJournalFader.List_mc.selectedQuestID",
+        "_root.QuestJournalFader.List_mc.selectedQuestID",
+        // Original Menu_mc attempts
+        "QuestJournalFader.Menu_mc.selectedQuestID",
+        "_root.QuestJournalFader.Menu_mc.selectedQuestID",
+        // QuestsFader variants
+        "QuestJournalFader.Menu_mc.QuestsFader.selectedQuestID",
+        "QuestJournalFader.List_mc.QuestsFader.selectedQuestID",
+        // Direct on fader
+        "QuestJournalFader.selectedQuestID",
+        "_root.selectedQuestID",
+        // Try without prefix
+        "selectedQuestID"
+    };
+
+    for (const char* path : paths) {
+        RE::GFxValue result;
+        if (journalMenu->uiMovie->GetVariable(&result, path)) {
+            std::string typeStr = result.IsNumber() ? "Number" : result.IsObject() ? "Object" : "Other";
+            spdlog::info("[JOURNAL] Path '{}' EXISTS, type={}", path, typeStr);
+
+            if (result.IsNumber()) {
+                RE::FormID id = static_cast<RE::FormID>(result.GetUInt());
+                if (id > 0) {
+                    spdlog::info("[JOURNAL] SUCCESS! Found quest 0x{:X} at path '{}'", id, path);
+                    return id;
+                }
+            }
+        } else {
+            spdlog::info("[JOURNAL] Path '{}' not found", path);
+        }
+    }
+
+    spdlog::warn("[JOURNAL] === DETECTION FAILED - NO QUEST ID FOUND ===");
+    return 0;
 }
 
 //=============================================================================
@@ -302,13 +416,9 @@ public:
                 continue;
             }
 
-            // Check for comma key (scan code 0x33 = 51)
+            // Check for comma key (scan code 0x33 = 51) - JOURNAL ONLY
             if (buttonEvent->idCode == 51) {
-                OnHotkeyPressed();
-            }
-            // Check for dot key (scan code 0x34 = 52)
-            else if (buttonEvent->idCode == 52) {
-                OnViewNotesHotkey();
+                OnQuestNoteHotkey();
             }
         }
 
@@ -318,30 +428,26 @@ public:
 private:
     InputHandler() = default;
 
-    void OnHotkeyPressed() {
-        // Don't trigger if console or menu is open
+    void OnQuestNoteHotkey() {
+        // MUST be in Journal Menu
         auto ui = RE::UI::GetSingleton();
-        if (ui && (ui->IsMenuOpen(RE::Console::MENU_NAME) || ui->GameIsPaused())) {
+        if (!ui || !ui->IsMenuOpen("Journal Menu")) {
+            spdlog::debug("[HOTKEY] Comma pressed but not in Journal, ignoring");
             return;
         }
 
-        spdlog::info("[HOTKEY] Comma key pressed - adding note");
-
-        // Trigger Papyrus text input
-        PapyrusBridge::RequestTextInput();
-    }
-
-    void OnViewNotesHotkey() {
-        // Don't trigger if console or menu is open
-        auto ui = RE::UI::GetSingleton();
-        if (ui && (ui->IsMenuOpen(RE::Console::MENU_NAME) || ui->GameIsPaused())) {
+        // Get current quest
+        RE::FormID questID = GetCurrentQuestInJournal();
+        if (questID == 0) {
+            spdlog::warn("[HOTKEY] No quest selected in Journal");
+            RE::DebugNotification("No quest selected");
             return;
         }
 
-        spdlog::info("[HOTKEY] Dot key pressed - viewing notes");
+        spdlog::info("[HOTKEY] Comma pressed in Journal - Quest: 0x{:X}", questID);
 
-        // Trigger Papyrus note list
-        PapyrusBridge::ShowNotesList();
+        // Trigger Papyrus quest note input
+        PapyrusBridge::ShowQuestNoteInput(questID);
     }
 };
 
@@ -350,35 +456,9 @@ private:
 //=============================================================================
 
 namespace PapyrusBridge {
-    // Called from Papyrus when user submits note text
-    void OnNoteReceived(RE::StaticFunctionTag*, RE::BSFixedString noteText) {
-        if (noteText.empty()) {
-            spdlog::info("[PAPYRUS] Empty note received, ignoring");
-            return;
-        }
-
-        // Get context
-        auto player = RE::PlayerCharacter::GetSingleton();
-        std::string context = "General";
-
-        if (player && player->GetParentCell()) {
-            auto cell = player->GetParentCell();
-            if (cell->GetName() && cell->GetName()[0] != '\0') {
-                context = cell->GetName();
-            }
-        }
-
-        // Add note
-        std::string text(noteText.c_str());
-        NoteManager::GetSingleton()->AddNote(text, context);
-
-        spdlog::info("[PAPYRUS] Note received: '{}' | Context: '{}'", text, context);
-        RE::DebugNotification("Note saved!");
-    }
-
-    // Request text input from player (called from C++ InputHandler)
-    void RequestTextInput() {
-        spdlog::info("[PAPYRUS] Requesting text input...");
+    // Show quest note input (called from C++ InputHandler)
+    void ShowQuestNoteInput(RE::FormID questID) {
+        spdlog::info("[PAPYRUS] Showing note input for quest 0x{:X}", questID);
 
         auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!vm) {
@@ -386,104 +466,55 @@ namespace PapyrusBridge {
             return;
         }
 
-        auto policy = vm->GetObjectHandlePolicy();
-        if (!policy) {
-            spdlog::error("[PAPYRUS] Failed to get policy");
-            return;
-        }
+        // Get quest name for display
+        auto quest = RE::TESForm::LookupByID<RE::TESQuest>(questID);
+        std::string questName = quest ? quest->GetName() : "Unknown Quest";
 
-        // Call PersonalNotes.RequestInput()
-        auto args = RE::MakeFunctionArguments();
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-
-        vm->DispatchStaticCall("PersonalNotes", "RequestInput", args, callback);
-        spdlog::info("[PAPYRUS] RequestInput dispatched");
-    }
-
-    // Show notes list (called from C++ InputHandler)
-    void ShowNotesList() {
-        spdlog::info("[PAPYRUS] Showing notes list...");
-
-        auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) {
-            spdlog::error("[PAPYRUS] Failed to get VM");
-            return;
-        }
-
-        // Call PersonalNotes.ShowNotesList()
-        auto args = RE::MakeFunctionArguments();
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-
-        vm->DispatchStaticCall("PersonalNotes", "ShowNotesList", args, callback);
-        spdlog::info("[PAPYRUS] ShowNotesList dispatched");
-    }
-
-    // Get note count
-    std::int32_t GetNoteCount(RE::StaticFunctionTag*) {
-        auto count = NoteManager::GetSingleton()->GetNoteCount();
-        spdlog::info("[PAPYRUS] GetNoteCount called: {}", count);
-        return static_cast<std::int32_t>(count);
-    }
-
-    // Get note text by index
-    RE::BSFixedString GetNoteText(RE::StaticFunctionTag*, std::int32_t index) {
-        if (index < 0) {
-            spdlog::warn("[PAPYRUS] GetNoteText: Negative index {}, clamping to 0", index);
-            index = 0;
-        }
-
-        auto text = NoteManager::GetSingleton()->GetNoteText(static_cast<size_t>(index));
-        return RE::BSFixedString(text);
-    }
-
-    // Get note context by index
-    RE::BSFixedString GetNoteContext(RE::StaticFunctionTag*, std::int32_t index) {
-        if (index < 0) {
-            spdlog::warn("[PAPYRUS] GetNoteContext: Negative index {}, clamping to 0", index);
-            index = 0;
-        }
-
-        auto context = NoteManager::GetSingleton()->GetNoteContext(static_cast<size_t>(index));
-        return RE::BSFixedString(context);
-    }
-
-    // Get note timestamp by index (formatted as string)
-    RE::BSFixedString GetNoteTimestamp(RE::StaticFunctionTag*, std::int32_t index) {
-        if (index < 0) {
-            spdlog::warn("[PAPYRUS] GetNoteTimestamp: Negative index {}, clamping to 0", index);
-            index = 0;
-        }
-
+        // Get existing note text (if any)
         auto mgr = NoteManager::GetSingleton();
-        auto timestamp = mgr->GetNoteTimestamp(static_cast<size_t>(index));
-        auto formatted = mgr->FormatTimestamp(timestamp);
-        return RE::BSFixedString(formatted);
+        std::string existingText = mgr->GetNoteForQuest(questID);
+
+        spdlog::info("[PAPYRUS] Quest name: '{}', Existing text: '{}'", questName, existingText);
+
+        // Call Papyrus with quest info
+        auto args = RE::MakeFunctionArguments(
+            static_cast<std::int32_t>(questID),
+            RE::BSFixedString(questName),
+            RE::BSFixedString(existingText)
+        );
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+
+        vm->DispatchStaticCall("PersonalNotes", "ShowQuestNoteInput", args, callback);
+        spdlog::info("[PAPYRUS] ShowQuestNoteInput dispatched");
     }
 
-    // Delete note by index
-    void DeleteNote(RE::StaticFunctionTag*, std::int32_t index) {
-        if (index < 0) {
-            spdlog::warn("[PAPYRUS] DeleteNote: Negative index {}, ignoring", index);
+    // Save quest note (called from Papyrus)
+    void SaveQuestNote(RE::StaticFunctionTag*, std::int32_t questIDSigned, RE::BSFixedString noteText) {
+        // Papyrus passes int32, but FormIDs are unsigned - convert properly
+        // Modded quest IDs like 0xFE000000+ will be negative in int32
+        RE::FormID questID = static_cast<RE::FormID>(static_cast<std::uint32_t>(questIDSigned));
+
+        if (questID == 0) {
+            spdlog::warn("[PAPYRUS] Invalid quest ID: 0");
             return;
         }
 
-        bool success = NoteManager::GetSingleton()->DeleteNote(static_cast<size_t>(index));
-        if (success) {
-            spdlog::info("[PAPYRUS] DeleteNote succeeded for index {}", index);
+        std::string text(noteText.c_str());
+        NoteManager::GetSingleton()->SaveNoteForQuest(questID, text);
+
+        if (text.empty()) {
+            spdlog::info("[PAPYRUS] Deleted note for quest 0x{:X}", questID);
         } else {
-            spdlog::warn("[PAPYRUS] DeleteNote failed for index {}", index);
+            spdlog::info("[PAPYRUS] Saved note for quest 0x{:X}: '{}'", questID, text);
         }
+
+        RE::DebugNotification("Quest note saved!");
     }
 
     // Register native functions
     bool Register(RE::BSScript::IVirtualMachine* vm) {
-        vm->RegisterFunction("OnNoteReceived", "PersonalNotesNative", OnNoteReceived);
-        vm->RegisterFunction("GetNoteCount", "PersonalNotesNative", GetNoteCount);
-        vm->RegisterFunction("GetNoteText", "PersonalNotesNative", GetNoteText);
-        vm->RegisterFunction("GetNoteContext", "PersonalNotesNative", GetNoteContext);
-        vm->RegisterFunction("GetNoteTimestamp", "PersonalNotesNative", GetNoteTimestamp);
-        vm->RegisterFunction("DeleteNote", "PersonalNotesNative", DeleteNote);
-        spdlog::info("[PAPYRUS] All native functions registered (6 total)");
+        vm->RegisterFunction("SaveQuestNote", "PersonalNotesNative", SaveQuestNote);
+        spdlog::info("[PAPYRUS] Native functions registered");
         return true;
     }
 }

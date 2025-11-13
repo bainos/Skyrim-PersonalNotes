@@ -13,6 +13,17 @@ if (Test-Path $DeployScript) {
     Write-Host "Warning: deploy.ps1 not found in $ScriptDir" -ForegroundColor Yellow
 }
 
+$DeployScript = Join-Path $ScriptDir 'compile-papyrus.ps1'
+
+# Run compile-papyrus.ps1 if it exists
+if (Test-Path $DeployScript) {
+    Write-Host "Running pre-deploy script: $DeployScript" -ForegroundColor Cyan
+    & $DeployScript
+    Write-Host "Pre-deploy script completed." -ForegroundColor Green
+} else {
+    Write-Host "Warning: deploy.ps1 not found in $ScriptDir" -ForegroundColor Yellow
+}
+
 # PersonalNotes - Package mod for distribution
 
 $ErrorActionPreference = "Stop"

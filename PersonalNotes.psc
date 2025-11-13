@@ -1,105 +1,32 @@
 Scriptname PersonalNotes Hidden
 
-; Called from C++ when comma hotkey pressed
-Function RequestInput() Global
-    ; Show text input via Extended Vanilla Menus (synchronous call)
-    String result = ExtendedVanillaMenus.TextInput("Enter Note:", "")
+; Called from C++ when comma pressed in Journal Menu
+; Parameters:
+;   questID - FormID of the quest
+;   questName - Display name of the quest
+;   existingText - Current note text (empty string if no note exists)
+Function ShowQuestNoteInput(int questID, string questName, string existingText) Global
+    ; Build prompt with quest name
+    String prompt = "Note for: " + questName
 
-    ; If user entered text, send to C++
-    If result != ""
-        PersonalNotesNative.OnNoteReceived(result)
-    EndIf
-EndFunction
+    ; Log for debugging
+    Debug.Trace("[PersonalNotes] Opening text input for quest " + questID + ", existing text: '" + existingText + "'")
 
-; Called from C++ when dot hotkey pressed
-Function ShowNotesList() Global
-    Int count = PersonalNotesNative.GetNoteCount()
+    ; Show text input (pre-filled with existing text if any)
+    String result = ExtendedVanillaMenus.TextInput(prompt, existingText)
 
-    ; Handle empty notes
-    If count == 0
-        String[] emptyOptions = New String[1]
-        emptyOptions[0] = "OK"
-        ExtendedVanillaMenus.MessageBox("No notes yet.\n\nPress comma (,) to add a note.", emptyOptions)
+    ; NOTE: Known issue - keyboard may freeze after EVM closes
+    ; Workaround: Open console (~) then close it to restore input
+    ; No Papyrus API exists to reset input state programmatically
+
+    ; Filter out special cancel string from ExtendedVanillaMenus
+    If result == "EVM_TextInput_Cancelled"
+        ; User cancelled - do nothing
+        Debug.Trace("[PersonalNotes] User cancelled text input")
         Return
     EndIf
 
-    ; Build note list for display
-    String[] noteOptions = Utility.CreateStringArray(count)
-    String[] noteInfos = Utility.CreateStringArray(count)
-
-    Int i = 0
-    While i < count
-        noteOptions[i] = FormatNoteForList(i)
-        noteInfos[i] = PersonalNotesNative.GetNoteText(i)
-        i += 1
-    EndWhile
-
-    ; Show list menu
-    Int selected = ExtendedVanillaMenus.ListMenu(noteOptions, noteInfos, "Personal Notes", "Select", "Cancel")
-
-    ; If user selected a note, show submenu
-    If selected >= 0
-        ShowNoteSubmenu(selected)
-    EndIf
-EndFunction
-
-; Format a note for list display
-String Function FormatNoteForList(Int index) Global
-    String text = PersonalNotesNative.GetNoteText(index)
-    String context = PersonalNotesNative.GetNoteContext(index)
-    String timestamp = PersonalNotesNative.GetNoteTimestamp(index)
-
-    ; Truncate text to 40 chars
-    If StringUtil.GetLength(text) > 40
-        text = StringUtil.Substring(text, 0, 40) + "..."
-    EndIf
-
-    Return "[" + timestamp + "] " + context + ": " + text
-EndFunction
-
-; Show submenu for selected note
-Function ShowNoteSubmenu(Int index) Global
-    ; Get note data
-    String noteText = PersonalNotesNative.GetNoteText(index)
-    String noteContext = PersonalNotesNative.GetNoteContext(index)
-    String noteTimestamp = PersonalNotesNative.GetNoteTimestamp(index)
-
-    ; Format full note for display
-    String fullNote = "[" + noteTimestamp + "] " + noteContext + "\n\n" + noteText
-
-    ; Show options
-    String[] options = New String[3]
-    options[0] = "Delete Note"
-    options[1] = "Back to List"
-    options[2] = "Close"
-
-    Int choice = ExtendedVanillaMenus.MessageBox(fullNote, options, True)
-
-    If choice == 0
-        ; Delete
-        ConfirmDelete(index)
-    ElseIf choice == 1
-        ; Back to List
-        ShowNotesList()
-    EndIf
-    ; If choice == 2 or -1 (Close/Cancel), just exit
-EndFunction
-
-; Confirm deletion of a note
-Function ConfirmDelete(Int index) Global
-    String[] options = New String[2]
-    options[0] = "Cancel"
-    options[1] = "Yes, Delete"
-
-    Int choice = ExtendedVanillaMenus.MessageBox("Delete this note?", options, True)
-
-    If choice == 1
-        ; User confirmed - delete note
-        PersonalNotesNative.DeleteNote(index)
-        Debug.Notification("Note deleted")
-        ShowNotesList()
-    Else
-        ; User canceled - return to note view
-        ShowNoteSubmenu(index)
-    EndIf
+    ; Save the note (empty result = delete)
+    Debug.Trace("[PersonalNotes] Saving note: '" + result + "'")
+    PersonalNotesNative.SaveQuestNote(questID, result)
 EndFunction
