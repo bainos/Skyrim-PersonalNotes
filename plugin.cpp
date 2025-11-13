@@ -110,12 +110,9 @@ public:
         if (text.empty()) {
             // Empty text = delete note
             notesByQuest_.erase(questID);
-            spdlog::info("[NOTE] Deleted note for quest 0x{:X}", questID);
         } else {
             Note note(text, questID);
             notesByQuest_[questID] = note;
-            spdlog::info("[NOTE] Saved note for quest 0x{:X}: '{}' | Total: {}",
-                questID, text, notesByQuest_.size());
         }
     }
 
@@ -126,17 +123,7 @@ public:
 
     void DeleteNoteForQuest(RE::FormID questID) {
         std::unique_lock lock(lock_);
-
-        auto it = notesByQuest_.find(questID);
-        if (it != notesByQuest_.end()) {
-            std::string preview = it->second.text;
-            if (preview.length() > 30) {
-                preview = preview.substr(0, 30) + "...";
-            }
-            notesByQuest_.erase(it);
-            spdlog::info("[NOTE] Deleted note for quest 0x{:X}: '{}' | Remaining: {}",
-                questID, preview, notesByQuest_.size());
-        }
+        notesByQuest_.erase(questID);
     }
 
     std::unordered_map<RE::FormID, Note> GetAllNotes() const {
@@ -244,137 +231,40 @@ RE::FormID GetCurrentQuestInJournal() {
 
     auto journalMenu = ui->GetMenu<RE::JournalMenu>();
     if (!journalMenu) {
-        spdlog::warn("[JOURNAL] Failed to get JournalMenu pointer");
+        spdlog::error("[JOURNAL] Failed to get JournalMenu pointer");
         return 0;
     }
 
-    spdlog::info("[JOURNAL] === STARTING QUEST DETECTION ===");
-
-    // METHOD 1: Direct struct access - questsTab.unk18
-    spdlog::info("[JOURNAL] METHOD 1: Accessing questsTab.unk18...");
+    // Access quest tab and get selected entry
     auto& rtData = journalMenu->GetRuntimeData();
     auto& questsTab = rtData.questsTab;
 
-    if (questsTab.unk18.IsObject()) {
-        spdlog::info("[JOURNAL] questsTab.unk18 IS an Object - testing members...");
-
-        // Try all possible member names exhaustively
-        const char* memberNames[] = {
-            // Properties from SWF dump
-            "selectedQuestID", "selectedQuestInstance",
-            // Underscore variants
-            "_selectedQuestID", "_selectedQuestInstance",
-            // List components
-            "TitleList", "TitleList_mc", "List_mc", "CategoryList_mc",
-            // Text fields
-            "DescriptionText", "QuestTitleText", "questDescriptionText", "questTitleText",
-            // Data holders
-            "entryList", "selectedEntry", "selectedIndex",
-            // Boolean flags
-            "bHasMiscQuests", "bUpdated",
-            // Other
-            "_parent", "_bottomBar", "BottomBar_mc"
-        };
-
-        for (const char* name : memberNames) {
-            RE::GFxValue member;
-            if (questsTab.unk18.GetMember(name, &member)) {
-                std::string typeStr =
-                    member.IsNumber() ? "Number" :
-                    member.IsString() ? "String" :
-                    member.IsObject() ? "Object" :
-                    member.IsArray() ? "Array" :
-                    member.IsBool() ? "Bool" :
-                    member.IsUndefined() ? "Undefined" : "Unknown";
-
-                spdlog::info("[JOURNAL] FOUND member '{}' type={}", name, typeStr);
-
-                // If Number, check if it's a quest ID
-                if (member.IsNumber()) {
-                    RE::FormID id = static_cast<RE::FormID>(member.GetUInt());
-                    if (id > 0) {
-                        spdlog::info("[JOURNAL] SUCCESS! Found quest 0x{:X} at questsTab.unk18.{}", id, name);
-                        return id;
-                    } else {
-                        spdlog::info("[JOURNAL] Member '{}' is Number but value is 0", name);
-                    }
-                } else if (member.IsObject()) {
-                    // Drill deeper into objects
-                    const char* subMembers[] = {"selectedQuestID", "selectedIndex", "formID", "selectedEntry"};
-                    for (const char* subName : subMembers) {
-                        RE::GFxValue subMember;
-                        if (member.GetMember(subName, &subMember)) {
-                            std::string subTypeStr = subMember.IsNumber() ? "Number" :
-                                subMember.IsObject() ? "Object" : "Other";
-                            spdlog::info("[JOURNAL] FOUND submember '{}.{}' type={}", name, subName, subTypeStr);
-
-                            if (subMember.IsNumber()) {
-                                RE::FormID id = static_cast<RE::FormID>(subMember.GetUInt());
-                                if (id > 0) {
-                                    spdlog::info("[JOURNAL] SUCCESS! Found quest 0x{:X} at questsTab.unk18.{}.{}", id, name, subName);
-                                    return id;
-                                } else {
-                                    spdlog::info("[JOURNAL] Submember '{}.{}' is Number but value is 0", name, subName);
-                                }
-                            }
-                        } else {
-                            spdlog::info("[JOURNAL] Submember '{}.{}' not found", name, subName);
-                        }
-                    }
-                }
-            } else {
-                spdlog::info("[JOURNAL] Member '{}' not found", name);
-            }
-        }
-        spdlog::info("[JOURNAL] METHOD 1: No quest ID found in questsTab.unk18");
-    } else {
-        spdlog::warn("[JOURNAL] questsTab.unk18 is NOT an Object!");
-    }
-
-    // METHOD 2: Scaleform path access via uiMovie
-    spdlog::info("[JOURNAL] METHOD 2: Trying Scaleform paths...");
-    if (!journalMenu->uiMovie) {
-        spdlog::warn("[JOURNAL] uiMovie is null!");
+    if (!questsTab.unk18.IsObject()) {
+        spdlog::error("[JOURNAL] questsTab.unk18 is not an Object");
         return 0;
     }
 
-    const char* paths[] = {
-        // Based on List_mc from dump
-        "QuestJournalFader.List_mc.selectedQuestID",
-        "_root.QuestJournalFader.List_mc.selectedQuestID",
-        // Original Menu_mc attempts
-        "QuestJournalFader.Menu_mc.selectedQuestID",
-        "_root.QuestJournalFader.Menu_mc.selectedQuestID",
-        // QuestsFader variants
-        "QuestJournalFader.Menu_mc.QuestsFader.selectedQuestID",
-        "QuestJournalFader.List_mc.QuestsFader.selectedQuestID",
-        // Direct on fader
-        "QuestJournalFader.selectedQuestID",
-        "_root.selectedQuestID",
-        // Try without prefix
-        "selectedQuestID"
-    };
-
-    for (const char* path : paths) {
-        RE::GFxValue result;
-        if (journalMenu->uiMovie->GetVariable(&result, path)) {
-            std::string typeStr = result.IsNumber() ? "Number" : result.IsObject() ? "Object" : "Other";
-            spdlog::info("[JOURNAL] Path '{}' EXISTS, type={}", path, typeStr);
-
-            if (result.IsNumber()) {
-                RE::FormID id = static_cast<RE::FormID>(result.GetUInt());
-                if (id > 0) {
-                    spdlog::info("[JOURNAL] SUCCESS! Found quest 0x{:X} at path '{}'", id, path);
-                    return id;
-                }
-            }
-        } else {
-            spdlog::info("[JOURNAL] Path '{}' not found", path);
-        }
+    // Get selectedEntry.formID
+    RE::GFxValue selectedEntry;
+    if (!questsTab.unk18.GetMember("selectedEntry", &selectedEntry) || !selectedEntry.IsObject()) {
+        spdlog::debug("[JOURNAL] No quest selected");
+        return 0;
     }
 
-    spdlog::warn("[JOURNAL] === DETECTION FAILED - NO QUEST ID FOUND ===");
-    return 0;
+    RE::GFxValue formIDValue;
+    if (!selectedEntry.GetMember("formID", &formIDValue) || !formIDValue.IsNumber()) {
+        spdlog::warn("[JOURNAL] selectedEntry has no formID");
+        return 0;
+    }
+
+    RE::FormID questID = static_cast<RE::FormID>(formIDValue.GetUInt());
+    if (questID == 0) {
+        spdlog::debug("[JOURNAL] Quest FormID is 0");
+        return 0;
+    }
+
+    spdlog::info("[JOURNAL] Found quest 0x{:X}", questID);
+    return questID;
 }
 
 //=============================================================================
@@ -432,21 +322,17 @@ private:
         // MUST be in Journal Menu
         auto ui = RE::UI::GetSingleton();
         if (!ui || !ui->IsMenuOpen("Journal Menu")) {
-            spdlog::debug("[HOTKEY] Comma pressed but not in Journal, ignoring");
             return;
         }
 
         // Get current quest
         RE::FormID questID = GetCurrentQuestInJournal();
         if (questID == 0) {
-            spdlog::warn("[HOTKEY] No quest selected in Journal");
             RE::DebugNotification("No quest selected");
             return;
         }
 
-        spdlog::info("[HOTKEY] Comma pressed in Journal - Quest: 0x{:X}", questID);
-
-        // Trigger Papyrus quest note input
+        // Show note input dialog
         PapyrusBridge::ShowQuestNoteInput(questID);
     }
 };
@@ -458,8 +344,6 @@ private:
 namespace PapyrusBridge {
     // Show quest note input (called from C++ InputHandler)
     void ShowQuestNoteInput(RE::FormID questID) {
-        spdlog::info("[PAPYRUS] Showing note input for quest 0x{:X}", questID);
-
         auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!vm) {
             spdlog::error("[PAPYRUS] Failed to get VM");
@@ -474,9 +358,7 @@ namespace PapyrusBridge {
         auto mgr = NoteManager::GetSingleton();
         std::string existingText = mgr->GetNoteForQuest(questID);
 
-        spdlog::info("[PAPYRUS] Quest name: '{}', Existing text: '{}'", questName, existingText);
-
-        // Call Papyrus with quest info
+        // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
             static_cast<std::int32_t>(questID),
             RE::BSFixedString(questName),
@@ -485,7 +367,7 @@ namespace PapyrusBridge {
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
 
         vm->DispatchStaticCall("PersonalNotes", "ShowQuestNoteInput", args, callback);
-        spdlog::info("[PAPYRUS] ShowQuestNoteInput dispatched");
+        spdlog::info("[PAPYRUS] Note input opened for quest 0x{:X}", questID);
     }
 
     // Save quest note (called from Papyrus)
@@ -495,7 +377,7 @@ namespace PapyrusBridge {
         RE::FormID questID = static_cast<RE::FormID>(static_cast<std::uint32_t>(questIDSigned));
 
         if (questID == 0) {
-            spdlog::warn("[PAPYRUS] Invalid quest ID: 0");
+            spdlog::warn("[NOTE] Invalid quest ID");
             return;
         }
 
@@ -503,9 +385,9 @@ namespace PapyrusBridge {
         NoteManager::GetSingleton()->SaveNoteForQuest(questID, text);
 
         if (text.empty()) {
-            spdlog::info("[PAPYRUS] Deleted note for quest 0x{:X}", questID);
+            spdlog::info("[NOTE] Deleted note for quest 0x{:X}", questID);
         } else {
-            spdlog::info("[PAPYRUS] Saved note for quest 0x{:X}: '{}'", questID, text);
+            spdlog::info("[NOTE] Saved note for quest 0x{:X}", questID);
         }
 
         RE::DebugNotification("Quest note saved!");
