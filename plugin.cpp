@@ -14,8 +14,10 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <shared_mutex>
 #include <ctime>
+#include <chrono>
 
 //=============================================================================
 // Data Structures
@@ -240,7 +242,7 @@ RE::FormID GetCurrentQuestInJournal() {
     auto& questsTab = rtData.questsTab;
 
     if (!questsTab.unk18.IsObject()) {
-        spdlog::error("[JOURNAL] questsTab.unk18 is not an Object");
+        spdlog::debug("[JOURNAL] questsTab.unk18 is not an Object");
         return 0;
     }
 
@@ -263,8 +265,87 @@ RE::FormID GetCurrentQuestInJournal() {
         return 0;
     }
 
-    spdlog::info("[JOURNAL] Found quest 0x{:X}", questID);
+    spdlog::debug("[JOURNAL] Found quest 0x{:X}", questID);
     return questID;
+}
+
+//=============================================================================
+// Journal Note Helper
+//=============================================================================
+
+class JournalNoteHelper {
+public:
+    static JournalNoteHelper* GetSingleton() {
+        static JournalNoteHelper instance;
+        return &instance;
+    }
+
+    void Update();
+    void OnJournalOpen();
+    void OnJournalClose();
+
+private:
+    JournalNoteHelper() = default;
+
+    RE::FormID currentQuestID = 0;
+    std::chrono::steady_clock::time_point selectionTime;
+    bool journalOpen = false;
+    bool notificationShown = false;
+};
+
+void JournalNoteHelper::OnJournalOpen() {
+    currentQuestID = 0;
+    journalOpen = true;
+    notificationShown = false;
+
+    spdlog::info("[HELPER] Journal opened");
+}
+
+void JournalNoteHelper::OnJournalClose() {
+    journalOpen = false;
+    currentQuestID = 0;
+    notificationShown = false;
+
+    spdlog::info("[HELPER] Journal closed - state reset");
+}
+
+void JournalNoteHelper::Update() {
+    if (!journalOpen) return;
+
+    RE::FormID questID = GetCurrentQuestInJournal();
+
+    // Quest changed?
+    if (questID != currentQuestID) {
+        currentQuestID = questID;
+        selectionTime = std::chrono::steady_clock::now();
+        notificationShown = false;
+        spdlog::debug("[HELPER] Quest changed to 0x{:X}", questID);
+        return;
+    }
+
+    // No quest selected
+    if (questID == 0) return;
+
+    // Already shown for current selection?
+    if (notificationShown) return;
+
+    // Check if 0.5 seconds passed
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - selectionTime
+    );
+
+    if (elapsed.count() >= 500) {
+        // Check if quest has note
+        if (NoteManager::GetSingleton()->HasNoteForQuest(questID)) {
+            // Note detected after 0.5sec hover (sound/notification removed - doesn't work in menu context)
+            notificationShown = true;
+            spdlog::info("[HELPER] Quest 0x{:X} has note", questID);
+        } else {
+            // No note, but mark as checked to avoid re-checking every frame
+            notificationShown = true;
+        }
+    }
 }
 
 //=============================================================================
@@ -291,6 +372,27 @@ public:
     RE::BSEventNotifyControl ProcessEvent(
         RE::InputEvent* const* a_event,
         RE::BSTEventSource<RE::InputEvent*>*) override {
+
+        // Update journal helper (check for journal open/close and run update logic)
+        // Only run if player exists (avoid crashes during load)
+        static bool wasJournalOpen = false;
+        auto player = RE::PlayerCharacter::GetSingleton();
+        if (player && player->Is3DLoaded()) {
+            auto ui = RE::UI::GetSingleton();
+            bool isJournalOpen = ui && ui->IsMenuOpen("Journal Menu");
+
+            if (isJournalOpen && !wasJournalOpen) {
+                JournalNoteHelper::GetSingleton()->OnJournalOpen();
+            } else if (!isJournalOpen && wasJournalOpen) {
+                JournalNoteHelper::GetSingleton()->OnJournalClose();
+            }
+
+            if (isJournalOpen) {
+                JournalNoteHelper::GetSingleton()->Update();
+            }
+
+            wasJournalOpen = isJournalOpen;
+        }
 
         if (!a_event) {
             return RE::BSEventNotifyControl::kContinue;
