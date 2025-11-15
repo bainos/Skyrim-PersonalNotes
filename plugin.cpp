@@ -297,9 +297,14 @@ public:
 
     void OnJournalOpen();
     void OnJournalClose();
+    void UpdateTextField(RE::FormID questID);
 
 private:
     JournalNoteHelper() = default;
+
+    RE::GFxValue noteTextField_;
+    RE::GFxValue textFormat_;
+    RE::GPtr<RE::JournalMenu> journalMenu_;
 };
 
 //=============================================================================
@@ -729,9 +734,8 @@ void DumpGFxValue(const RE::GFxValue& val, const std::string& path, int depth = 
 }
 
 void JournalNoteHelper::OnJournalOpen() {
-    spdlog::info("[HELPER] OnJournalOpen() called");
+    spdlog::info("[HELPER] Journal opened - creating TextField");
 
-    // DIAGNOSTIC: Dump Journal Menu structure
     auto ui = RE::UI::GetSingleton();
     if (!ui) {
         spdlog::error("[HELPER] Failed to get UI singleton");
@@ -744,210 +748,59 @@ void JournalNoteHelper::OnJournalOpen() {
         return;
     }
 
-    spdlog::info("[HELPER] === JOURNAL MENU DUMP ===");
-    spdlog::info("[HELPER] JournalMenu pointer: {}", (void*)journalMenu.get());
-    spdlog::info("[HELPER] menuFlags: 0x{:X}", journalMenu->menuFlags.underlying());
-    spdlog::info("[HELPER] depthPriority: {}", journalMenu->depthPriority);
-    spdlog::info("[HELPER] inputContext: 0x{:X}", journalMenu->inputContext.underlying());
+    // Store journal menu reference
+    journalMenu_ = journalMenu;
 
-    if (journalMenu->uiMovie) {
-        spdlog::info("[HELPER] uiMovie exists: {}", (void*)journalMenu->uiMovie.get());
-
-        // Try to get _root
-        RE::GFxValue root;
-        bool gotRoot = journalMenu->uiMovie->GetVariable(&root, "_root");
-        spdlog::info("[HELPER] GetVariable(_root) = {}", gotRoot);
-
-        if (gotRoot) {
-            spdlog::info("[HELPER] _root Type: {}, IsObject: {}", (int)root.GetType(), root.IsObject());
-
-            // Try common members
-            RE::GFxValue testVal;
-            const char* members[] = {"_x", "_y", "_width", "_height", "_name", "_target", "addChild", "createTextField", "mouseEnabled"};
-            for (const char* member : members) {
-                if (root.GetMember(member, &testVal)) {
-                    spdlog::info("[HELPER]   _root.{} exists, Type={}", member, (int)testVal.GetType());
-                } else {
-                    spdlog::info("[HELPER]   _root.{} NOT FOUND", member);
-                }
-            }
-        }
-    } else {
-        spdlog::error("[HELPER] uiMovie is NULL");
-    }
-
-    spdlog::info("[HELPER] === END DUMP ===");
-
-    // RECURSIVE DUMP of _root structure
+    // Create TextField in Journal's _root
     if (journalMenu->uiMovie) {
         RE::GFxValue root;
         if (journalMenu->uiMovie->GetVariable(&root, "_root")) {
-            spdlog::info("[HELPER] === RECURSIVE _ROOT DUMP (depth=3) ===");
-            DumpGFxValue(root, "_root", 0, 3);
-            spdlog::info("[HELPER] === END RECURSIVE DUMP ===");
-        }
-    }
-
-    // SEARCH: Find an existing TextField in Journal to examine font configuration
-    if (journalMenu->uiMovie) {
-        RE::GFxValue root;
-        if (journalMenu->uiMovie->GetVariable(&root, "_root")) {
-            spdlog::info("[HELPER] === SEARCHING FOR EXISTING TEXTFIELD ===");
-
-            // Try common paths where TextFields might exist
-            const char* searchPaths[] = {
-                "QuestList",
-                "questList",
-                "Quest_mc",
-                "QuestsTab",
-                "questsTab",
-                "Entry0",
-                "Entry1"
-            };
-
-            for (const char* path : searchPaths) {
-                RE::GFxValue obj;
-                if (root.GetMember(path, &obj)) {
-                    spdlog::info("[HELPER] Found {}, Type={}", path, (int)obj.GetType());
-
-                    // Try to find textField child
-                    RE::GFxValue textField;
-                    const char* textFieldNames[] = {"textField", "TextField", "text", "_txt"};
-                    for (const char* tfName : textFieldNames) {
-                        if (obj.GetMember(tfName, &textField)) {
-                            spdlog::info("[HELPER] FOUND TEXTFIELD: {}.{}, Type={}", path, tfName, (int)textField.GetType());
-
-                            // Dump ALL properties we can find
-                            const char* props[] = {
-                                "text", "htmlText", "textColor", "font",
-                                "embedFonts", "html", "autoSize", "wordWrap",
-                                "_x", "_y", "_width", "_height",
-                                "textWidth", "textHeight"
-                            };
-
-                            for (const char* prop : props) {
-                                RE::GFxValue propVal;
-                                if (textField.GetMember(prop, &propVal)) {
-                                    if (propVal.IsString()) {
-                                        spdlog::info("[HELPER]   {}.{} = \"{}\" (Type={})", tfName, prop, propVal.GetString(), (int)propVal.GetType());
-                                    } else if (propVal.IsNumber()) {
-                                        spdlog::info("[HELPER]   {}.{} = {} (Type={})", tfName, prop, propVal.GetNumber(), (int)propVal.GetType());
-                                    } else if (propVal.IsBool()) {
-                                        spdlog::info("[HELPER]   {}.{} = {} (Type={})", tfName, prop, propVal.GetBool(), (int)propVal.GetType());
-                                    } else {
-                                        spdlog::info("[HELPER]   {}.{} exists (Type={})", tfName, prop, (int)propVal.GetType());
-                                    }
-                                }
-                            }
-
-                            break; // Found one, stop searching
-                        }
-                    }
-                    if (textField.IsObject()) break; // Stop searching paths
-                }
-            }
-
-            spdlog::info("[HELPER] === END TEXTFIELD SEARCH ===");
-        }
-    }
-
-    // TEST: Try creating a TextField in Journal's _root
-    if (journalMenu->uiMovie) {
-        RE::GFxValue root;
-        if (journalMenu->uiMovie->GetVariable(&root, "_root")) {
-            spdlog::info("[HELPER] TEST: Attempting to create TextField in Journal's _root");
-
             RE::GFxValue textField;
             RE::GFxValue createArgs[6];
-            createArgs[0].SetString("testTextField");  // name
-            createArgs[1].SetNumber(999999);           // VERY high depth to be on absolute top
-            createArgs[2].SetNumber(500);              // CENTER screen (3000/2 = 1500, but try 500)
-            createArgs[3].SetNumber(400);              // Middle height (812/2 = 406)
-            createArgs[4].SetNumber(600);              // LARGE width
-            createArgs[5].SetNumber(100);              // LARGE height
+            createArgs[0].SetString("questNoteTextField");  // name
+            createArgs[1].SetNumber(999999);                // VERY high depth to be on absolute top
+            createArgs[2].SetNumber(5);                     // TOP-LEFT x position
+            createArgs[3].SetNumber(5);                     // TOP-LEFT y position
+            createArgs[4].SetNumber(600);                   // width
+            createArgs[5].SetNumber(50);                    // height
 
             root.Invoke("createTextField", &textField, createArgs, 6);
 
-            spdlog::info("[HELPER] createTextField returned, Type={}, IsObject={}",
-                (int)textField.GetType(), textField.IsObject());
-
             if (textField.IsObject()) {
-                // Create TextFormat object using movie (not root)
+                // Create TextFormat object
                 RE::GFxValue textFormat;
                 journalMenu->uiMovie->CreateObject(&textFormat, "TextFormat");
 
-                spdlog::info("[HELPER] TextFormat CreateObject returned, Type={}", (int)textFormat.GetType());
-
                 if (textFormat.IsObject()) {
-                    textFormat.SetMember("font", "$EverywhereFont");
-                    textFormat.SetMember("size", 20);     // REQUIRED or glyphs fail
-                    textFormat.SetMember("color", 0xFF0000);
+                    textFormat.SetMember("font", "$EverywhereBoldFont");
+                    textFormat.SetMember("size", 20);
+                    textFormat.SetMember("color", 0xFFFFFF);  // White
 
-                    // DUMP TextFormat object after setting properties
-                    spdlog::info("[HELPER] === TEXTFORMAT DUMP ===");
-                    const char* tfProps[] = {"font", "size", "color", "bold", "italic", "underline"};
-                    for (const char* prop : tfProps) {
-                        RE::GFxValue propVal;
-                        if (textFormat.GetMember(prop, &propVal)) {
-                            if (propVal.IsString()) {
-                                spdlog::info("[HELPER]   TF.{} = \"{}\"", prop, propVal.GetString());
-                            } else if (propVal.IsNumber()) {
-                                spdlog::info("[HELPER]   TF.{} = {}", prop, propVal.GetNumber());
-                            } else if (propVal.IsBool()) {
-                                spdlog::info("[HELPER]   TF.{} = {}", prop, propVal.GetBool());
-                            } else {
-                                spdlog::info("[HELPER]   TF.{} exists (Type={})", prop, (int)propVal.GetType());
-                            }
-                        }
-                    }
-                    spdlog::info("[HELPER] === END TEXTFORMAT DUMP ===");
-
-                    // Apply defaultTextFormat *before setting text*
+                    // Apply defaultTextFormat
                     textField.SetMember("defaultTextFormat", textFormat);
-
-                    spdlog::info("[HELPER] defaultTextFormat set");
                 }
 
-                // Now the usual settings
+                // Configure TextField
                 textField.SetMember("embedFonts", true);
                 textField.SetMember("selectable", false);
                 textField.SetMember("autoSize", "left");
+                textField.SetMember("text", "");
 
-                // Now set the text
-                textField.SetMember("text", "***QUEST NOTES TEST***");
-
-                // Apply format to existing text using setTextFormat()
+                // Apply format to existing text
                 if (textFormat.IsObject()) {
                     textField.Invoke("setTextFormat", nullptr, &textFormat, 1);
-                    spdlog::info("[HELPER] setTextFormat() called to apply format to existing text");
                 }
 
-                spdlog::info("[HELPER] TextField configured with TextFormat");
+                // Store references
+                noteTextField_ = textField;
+                textFormat_ = textFormat;
 
-                // DUMP all TextField properties after configuration
-                spdlog::info("[HELPER] === TEXTFIELD DUMP AFTER CREATION ===");
-                const char* props[] = {
-                    "text", "htmlText", "textColor", "font",
-                    "embedFonts", "html", "autoSize", "wordWrap", "selectable",
-                    "_x", "_y", "_width", "_height",
-                    "textWidth", "textHeight", "type",
-                    "defaultTextFormat", "backgroundColor", "background"
-                };
-                for (const char* prop : props) {
-                    RE::GFxValue propVal;
-                    if (textField.GetMember(prop, &propVal)) {
-                        if (propVal.IsString()) {
-                            spdlog::info("[HELPER]   {} = \"{}\" (Type={})", prop, propVal.GetString(), (int)propVal.GetType());
-                        } else if (propVal.IsNumber()) {
-                            spdlog::info("[HELPER]   {} = {} (Type={})", prop, propVal.GetNumber(), (int)propVal.GetType());
-                        } else if (propVal.IsBool()) {
-                            spdlog::info("[HELPER]   {} = {} (Type={})", prop, propVal.GetBool(), (int)propVal.GetType());
-                        } else {
-                            spdlog::info("[HELPER]   {} exists (Type={})", prop, (int)propVal.GetType());
-                        }
-                    }
-                }
-                spdlog::info("[HELPER] === END TEXTFIELD DUMP ===");
+                spdlog::info("[HELPER] TextField created successfully");
+
+                // Get initial quest and update TextField
+                RE::FormID currentQuest = GetCurrentQuestInJournal();
+                UpdateTextField(currentQuest);
+                spdlog::info("[HELPER] Initial quest update: 0x{:X}", currentQuest);
             } else {
                 spdlog::error("[HELPER] createTextField failed");
             }
@@ -956,7 +809,46 @@ void JournalNoteHelper::OnJournalOpen() {
 }
 
 void JournalNoteHelper::OnJournalClose() {
-    spdlog::info("[HELPER] Journal closed (HUD disabled to prevent UI corruption)");
+    spdlog::info("[HELPER] Journal closed");
+
+    // Clear references
+    noteTextField_.SetUndefined();
+    textFormat_.SetUndefined();
+    journalMenu_ = nullptr;
+}
+
+void JournalNoteHelper::UpdateTextField(RE::FormID questID) {
+    if (!noteTextField_.IsObject()) {
+        return; // TextField not initialized
+    }
+
+    std::string message;
+
+    if (questID == 0) {
+        // No quest selected - clear text
+        message = "";
+    } else {
+        // Check if note exists for this quest
+        bool hasNote = NoteManager::GetSingleton()->HasNoteForQuest(questID);
+
+        if (hasNote) {
+            message = "Press , to edit note";
+        } else {
+            message = "Press , to add note";
+        }
+    }
+
+    // Update text
+    noteTextField_.SetMember("text", message.c_str());
+
+    // Reapply format (needed after text change)
+    if (textFormat_.IsObject()) {
+        noteTextField_.Invoke("setTextFormat", nullptr, &textFormat_, 1);
+    }
+
+    if (!message.empty()) {
+        spdlog::info("[HELPER] Quest 0x{:X}: {}", questID, message);
+    }
 }
 
 //=============================================================================
@@ -1011,16 +903,32 @@ public:
             }
 
             auto buttonEvent = event->AsButtonEvent();
-            if (!buttonEvent || !buttonEvent->IsDown()) {
+            if (!buttonEvent) {
                 continue;
             }
 
-            // Update quest tracking disabled - HUD menu causes UI corruption
-            // TODO: Inject text directly into Journal Menu instead of separate IMenu
+            // Check if in Journal Menu
+            auto ui = RE::UI::GetSingleton();
+            bool inJournal = ui && ui->IsMenuOpen("Journal Menu");
 
-            // Check for comma key (scan code 0x33 = 51) - JOURNAL ONLY
-            if (buttonEvent->idCode == 51) {
-                OnQuestNoteHotkey();
+            if (inJournal) {
+                uint32_t keyCode = buttonEvent->idCode;
+
+                // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
+                // Use IsUp() so Journal processes the input first, then we read the updated selection
+                // Arrow Up = 200, Arrow Down = 208, Mouse clicks = 256
+                if (buttonEvent->IsUp()) {
+                    if (keyCode == 200 || keyCode == 208 || keyCode == 256) { // Up, Down, or Left Mouse
+                        RE::FormID questID = GetCurrentQuestInJournal();
+                        JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
+                        spdlog::info("[INPUT] Navigation detected - updated TextField for quest 0x{:X}", questID);
+                    }
+                }
+
+                // Check for comma key on DOWN
+                if (buttonEvent->IsDown() && keyCode == 51) {
+                    OnQuestNoteHotkey();
+                }
             }
         }
 
