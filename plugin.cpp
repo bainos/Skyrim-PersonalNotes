@@ -90,6 +90,7 @@ class NoteManager {
 public:
     static constexpr std::uint32_t kDataKey = 'PNOT';  // PersonalNOTes
     static constexpr std::uint32_t kSerializationVersion = 2;
+    static constexpr RE::FormID GENERAL_NOTE_ID = 0xFFFFFFFF;  // Special ID for general notes
 
     static NoteManager* GetSingleton() {
         static NoteManager instance;
@@ -126,6 +127,21 @@ public:
     void DeleteNoteForQuest(RE::FormID questID) {
         std::unique_lock lock(lock_);
         notesByQuest_.erase(questID);
+    }
+
+    // General note methods (not tied to a quest)
+    std::string GetGeneralNote() const {
+        return GetNoteForQuest(GENERAL_NOTE_ID);
+    }
+
+    void SaveGeneralNote(const std::string& text) {
+        SaveNoteForQuest(GENERAL_NOTE_ID, text);
+
+        if (text.empty()) {
+            spdlog::info("[NOTE] Deleted general note");
+        } else {
+            spdlog::info("[NOTE] Saved general note ({} chars)", text.length());
+        }
     }
 
     std::unordered_map<RE::FormID, Note> GetAllNotes() const {
@@ -219,6 +235,7 @@ private:
 
 namespace PapyrusBridge {
     void ShowQuestNoteInput(RE::FormID questID);
+    void ShowGeneralNoteInput();
 }
 
 //=============================================================================
@@ -910,10 +927,9 @@ public:
             // Check if in Journal Menu
             auto ui = RE::UI::GetSingleton();
             bool inJournal = ui && ui->IsMenuOpen("Journal Menu");
+            uint32_t keyCode = buttonEvent->idCode;
 
             if (inJournal) {
-                uint32_t keyCode = buttonEvent->idCode;
-
                 // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
                 // Use IsUp() so Journal processes the input first, then we read the updated selection
                 // Arrow Up = 200, Arrow Down = 208, Mouse clicks = 256
@@ -924,10 +940,17 @@ public:
                         spdlog::info("[INPUT] Navigation detected - updated TextField for quest 0x{:X}", questID);
                     }
                 }
+            }
 
-                // Check for comma key on DOWN
-                if (buttonEvent->IsDown() && keyCode == 51) {
+            // Comma key (scan code 51) - context-dependent behavior
+            if (buttonEvent->IsDown() && keyCode == 51) {
+                if (inJournal) {
+                    // In Journal Menu → Quest note
                     OnQuestNoteHotkey();
+                } else {
+                    // During gameplay → General note
+                    PapyrusBridge::ShowGeneralNoteInput();
+                    spdlog::info("[INPUT] General note hotkey pressed");
                 }
             }
         }
@@ -1004,6 +1027,9 @@ namespace PapyrusBridge {
         std::string text(noteText.c_str());
         NoteManager::GetSingleton()->SaveNoteForQuest(questID, text);
 
+        // Update TextField to reflect new note state immediately
+        JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
+
         if (text.empty()) {
             spdlog::info("[NOTE] Deleted note for quest 0x{:X}", questID);
         } else {
@@ -1013,9 +1039,47 @@ namespace PapyrusBridge {
         RE::DebugNotification("Quest note saved!");
     }
 
+    // Show general note input (called from C++ InputHandler)
+    void ShowGeneralNoteInput() {
+        auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!vm) {
+            spdlog::error("[PAPYRUS] Failed to get VM");
+            return;
+        }
+
+        // Get existing general note text
+        std::string existingText = NoteManager::GetSingleton()->GetGeneralNote();
+
+        // Call Papyrus to show text input dialog
+        auto args = RE::MakeFunctionArguments(
+            std::move(RE::BSFixedString("")),           // questName (empty for general)
+            std::move(RE::BSFixedString(existingText))
+        );
+
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+
+        vm->DispatchStaticCall("PersonalNotes", "ShowGeneralNoteInput", args, callback);
+        spdlog::info("[PAPYRUS] General note input opened");
+    }
+
+    // Save general note (called from Papyrus)
+    void SaveGeneralNote(RE::StaticFunctionTag*, RE::BSFixedString noteText) {
+        std::string text(noteText.c_str());
+        NoteManager::GetSingleton()->SaveGeneralNote(text);
+
+        if (text.empty()) {
+            spdlog::info("[NOTE] Deleted general note");
+        } else {
+            spdlog::info("[NOTE] Saved general note");
+        }
+
+        RE::DebugNotification("General note saved!");
+    }
+
     // Register native functions
     bool Register(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("SaveQuestNote", "PersonalNotesNative", SaveQuestNote);
+        vm->RegisterFunction("SaveGeneralNote", "PersonalNotesNative", SaveGeneralNote);
         spdlog::info("[PAPYRUS] Native functions registered");
         return true;
     }
