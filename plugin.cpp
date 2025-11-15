@@ -944,11 +944,15 @@ public:
 
             // Comma key (scan code 51) - context-dependent behavior
             if (buttonEvent->IsDown() && keyCode == 51) {
+                spdlog::info("[INPUT] Comma detected - inJournal: {}", inJournal);
+
                 if (inJournal) {
                     // In Journal Menu → Quest note
+                    spdlog::info("[INPUT] Calling OnQuestNoteHotkey...");
                     OnQuestNoteHotkey();
                 } else {
                     // During gameplay → General note
+                    spdlog::info("[INPUT] Calling ShowGeneralNoteInput...");
                     PapyrusBridge::ShowGeneralNoteInput();
                     spdlog::info("[INPUT] General note hotkey pressed");
                 }
@@ -1041,21 +1045,29 @@ namespace PapyrusBridge {
 
     // Show general note input (called from C++ InputHandler)
     void ShowGeneralNoteInput() {
+        spdlog::info("[PAPYRUS] ShowGeneralNoteInput ENTRY");
+
         auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        spdlog::info("[PAPYRUS] VM obtained: {}", (void*)vm);
+
         if (!vm) {
             spdlog::error("[PAPYRUS] Failed to get VM");
             return;
         }
 
+        spdlog::info("[PAPYRUS] Getting existing general note...");
         // Get existing general note text
         std::string existingText = NoteManager::GetSingleton()->GetGeneralNote();
+        spdlog::info("[PAPYRUS] Existing text: {} chars", existingText.length());
 
+        spdlog::info("[PAPYRUS] Creating function arguments...");
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
             std::move(RE::BSFixedString("")),           // questName (empty for general)
             std::move(RE::BSFixedString(existingText))
         );
 
+        spdlog::info("[PAPYRUS] Arguments created, calling DispatchStaticCall...");
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
 
         vm->DispatchStaticCall("PersonalNotes", "ShowGeneralNoteInput", args, callback);

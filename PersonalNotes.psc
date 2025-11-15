@@ -21,3 +21,21 @@ Function ShowQuestNoteInput(int questID, string questName, string existingText) 
     ; Save the note (empty result = delete)
     PersonalNotesNative.SaveQuestNote(questID, result)
 EndFunction
+
+; Called from C++ when comma pressed during gameplay (not in Journal)
+; Parameters:
+;   questName - Empty string for general notes
+;   existingText - Current general note text (empty string if no note exists)
+Function ShowGeneralNoteInput(string questName, string existingText) Global
+    ; Show text input with "Personal Notes" prompt
+    String result = ExtendedVanillaMenus.TextInput("Personal Notes", existingText)
+
+    ; Filter out special cancel string from ExtendedVanillaMenus
+    If result == "EVM_TextInput_Cancelled"
+        ; User cancelled - do nothing
+        Return
+    EndIf
+
+    ; Save the general note (empty result = delete)
+    PersonalNotesNative.SaveGeneralNote(result)
+EndFunction

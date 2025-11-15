@@ -15,7 +15,6 @@ New-Item -ItemType Directory -Force -Path $OUTPUT_FOLDER | Out-Null
 # Compile PersonalNotes.psc
 Write-Host "Compiling PersonalNotes.psc..." -ForegroundColor Yellow
 & "$COMPILER_PATH" "PersonalNotes.psc" -f="$FLAGS_PATH" -i="$SOURCE_PATH" -o="$OUTPUT_FOLDER"
-#& "$COMPILER_PATH" "PersonalNotes.psc" -f="$FLAGS_PATH" -o="$OUTPUT_FOLDER"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to compile PersonalNotes.psc" -ForegroundColor Red
