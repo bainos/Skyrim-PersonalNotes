@@ -1,0 +1,74 @@
+[2025-11-15 17:49:52.609] [log] [info] PersonalNotes v1.0 initialized
+[2025-11-15 17:49:52.610] [log] [info] Serialization registered
+[2025-11-15 17:49:52.610] [log] [info] Messaging registered
+[2025-11-15 17:49:52.610] [log] [info] NoteManager initialized | Count: 0
+[2025-11-15 17:49:52.610] [log] [info] Plugin initialized
+[2025-11-15 17:51:46.849] [log] [info] [PAPYRUS] Native functions registered
+[2025-11-15 17:51:46.849] [log] [info] [INPUT] Input handler registered
+[2025-11-15 17:51:46.849] [log] [info] [HUD] QuestNoteHUDMenu registered
+[2025-11-15 17:51:46.849] [log] [info] [MESSAGE] kDataLoaded - Handlers registered
+[2025-11-15 17:52:49.247] [log] [info] [REVERT] Cleared all notes (new game)
+[2025-11-15 17:56:52.455] [log] [info] [HELPER] OnJournalOpen() called
+[2025-11-15 17:56:52.455] [log] [info] [HELPER] === JOURNAL MENU DUMP ===
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] JournalMenu pointer: 0x24b341e9ee0
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] menuFlags: 0xF6D
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] depthPriority: 5
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] inputContext: 0xC
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] uiMovie exists: 0x2494d0ff000
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] GetVariable(_root) = true
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] _root Type: 8, IsObject: true
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root._x exists, Type=3
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root._y exists, Type=3
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root._width exists, Type=3
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root._height exists, Type=3
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root._name exists, Type=4
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root._target exists, Type=4
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root.addChild NOT FOUND
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root.createTextField exists, Type=6
+[2025-11-15 17:56:52.456] [log] [info] [HELPER]   _root.mouseEnabled NOT FOUND
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] === END DUMP ===
+[2025-11-15 17:56:52.456] [log] [info] [HELPER] === RECURSIVE _ROOT DUMP (depth=3) ===
+[2025-11-15 17:56:52.456] [log] [info] _root = {object, Type=8}
+[2025-11-15 17:56:52.456] [log] [info]   _root._name = "_level0" (string)
+[2025-11-15 17:56:52.456] [log] [info]   _root._x = 0 (number)
+[2025-11-15 17:56:52.456] [log] [info]   _root._y = 0 (number)
+[2025-11-15 17:56:52.456] [log] [info]   _root._width = 3000 (number)
+[2025-11-15 17:56:52.456] [log] [info]   _root._height = 812.5 (number)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === END RECURSIVE DUMP ===
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === SEARCHING FOR EXISTING TEXTFIELD ===
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === END TEXTFIELD SEARCH ===
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] TEST: Attempting to create TextField in Journal's _root
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] createTextField returned, Type=8, IsObject=true
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] TextFormat CreateObject returned, Type=6
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === TEXTFORMAT DUMP ===
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   TF.font = "$EverywhereFont"
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   TF.size = 20
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   TF.color = 16711680
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   TF.bold exists (Type=1)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   TF.italic exists (Type=1)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   TF.underline exists (Type=1)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === END TEXTFORMAT DUMP ===
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] defaultTextFormat set
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] setTextFormat() called to apply format to existing text
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] TextField configured with TextFormat
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === TEXTFIELD DUMP AFTER CREATION ===
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   text = "***QUEST NOTES TEST***" (Type=4)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   htmlText = "***QUEST NOTES TEST***" (Type=4)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   textColor = 0 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   embedFonts = true (Type=2)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   html = false (Type=2)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   autoSize = "left" (Type=4)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   wordWrap = false (Type=2)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   selectable = false (Type=2)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   _x = 500 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   _y = 400 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   _width = 175.4 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   _height = 28.05 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   textWidth = 171 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   textHeight = 24 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   type = "dynamic" (Type=4)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   defaultTextFormat exists (Type=6)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   backgroundColor = 16777215 (Type=3)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER]   background = false (Type=2)
+[2025-11-15 17:56:52.457] [log] [info] [HELPER] === END TEXTFIELD DUMP ===
+[2025-11-15 17:57:03.778] [log] [info] [HELPER] Journal closed (HUD disabled to prevent UI corruption)
