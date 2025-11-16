@@ -3,6 +3,14 @@
  *
  * Simple in-game note-taking system using Extended Vanilla Menus for text input.
  * Notes persist across saves via SKSE co-save system.
+ *
+ * ERROR HANDLING STRATEGY:
+ * - Functions that retrieve data return empty/default values on error (e.g., empty string, 0, nullptr)
+ * - Functions with side effects return void and log errors internally
+ * - Critical errors are logged with spdlog::error(), warnings with spdlog::warn()
+ * - Serialization continues processing remaining data even if individual items fail
+ * - User input is validated and sanitized before storage
+ * - GFx lifecycle is managed with explicit initialization checks
  */
 
 #include "RE/Skyrim.h"
@@ -16,6 +24,83 @@
 #include <unordered_map>
 #include <shared_mutex>
 #include <ctime>
+
+//=============================================================================
+// Version Information
+//=============================================================================
+
+#define PERSONAL_NOTES_VERSION_MAJOR 1
+#define PERSONAL_NOTES_VERSION_MINOR 0
+#define PERSONAL_NOTES_VERSION_PATCH 0
+
+//=============================================================================
+// Constants
+//=============================================================================
+
+namespace UIConstants {
+    // TextField display constants
+    constexpr int TEXTFIELD_TOP_DEPTH = 999999;      // Very high depth to render on absolute top
+    constexpr int TEXTFIELD_DEFAULT_WIDTH = 600;     // Default width for text field
+    constexpr int TEXTFIELD_DEFAULT_HEIGHT = 50;     // Default height for text field
+}
+
+namespace KeyCodes {
+    // Keyboard scan codes
+    constexpr uint32_t ARROW_UP = 200;
+    constexpr uint32_t ARROW_DOWN = 208;
+
+    // Mouse button codes
+    constexpr uint32_t MOUSE_LEFT = 256;
+}
+
+//=============================================================================
+// Note Utilities
+//=============================================================================
+
+namespace NoteUtils {
+    // Maximum length for note text (prevent memory issues)
+    constexpr size_t MAX_NOTE_LENGTH = 4096;
+
+    /**
+     * Validates note text for basic requirements.
+     * @param text The text to validate
+     * @param maxLength Maximum allowed length
+     * @return true if valid, false otherwise
+     */
+    bool ValidateNoteText(const std::string& text, size_t maxLength = MAX_NOTE_LENGTH) {
+        // Length check
+        if (text.length() > maxLength) {
+            spdlog::warn("[VALIDATE] Note text exceeds maximum length: {} > {}", text.length(), maxLength);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Sanitizes note text for safe storage and serialization.
+     * - Enforces length limits
+     * - Removes null bytes (can cause issues in C-string interop)
+     *
+     * @param input The raw input text
+     * @return Sanitized text safe for storage
+     */
+    std::string SanitizeNoteText(const std::string& input) {
+        // 1. Enforce length limits
+        std::string sanitized = input.substr(0, MAX_NOTE_LENGTH);
+
+        // 2. Remove null bytes (can cause issues in C-string interop)
+        sanitized.erase(std::remove(sanitized.begin(), sanitized.end(), '\0'),
+                        sanitized.end());
+
+        // Log if sanitization occurred
+        if (sanitized.length() != input.length()) {
+            spdlog::info("[SANITIZE] Note text sanitized: {} -> {} chars",
+                         input.length(), sanitized.length());
+        }
+
+        return sanitized;
+    }
+}
 
 //=============================================================================
 // Data Structures
@@ -84,13 +169,31 @@ struct Note {
 // Settings Manager
 //=============================================================================
 
+/**
+ * @class SettingsManager
+ * @brief Manages plugin configuration loaded from INI file.
+ *
+ * Loads and validates settings from Data/SKSE/Plugins/PersonalNotes.ini
+ * including UI positioning, text formatting, and hotkey configuration.
+ * All loaded values are clamped to reasonable ranges.
+ */
 class SettingsManager {
 public:
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to singleton instance (never null)
+     */
     static SettingsManager* GetSingleton() {
         static SettingsManager instance;
         return &instance;
     }
 
+    /**
+     * @brief Load and validate settings from INI file.
+     *
+     * Reads configuration from Data/SKSE/Plugins/PersonalNotes.ini and
+     * clamps all values to valid ranges (e.g., font sizes 8-72, positions within 4K bounds).
+     */
     void LoadSettings() {
         constexpr auto path = L"Data/SKSE/Plugins/PersonalNotes.ini";
 
@@ -119,7 +222,20 @@ public:
         // Hotkey
         noteHotkeyScanCode = GetPrivateProfileIntW(L"Hotkey", L"iScanCode", 51, path);
 
-        spdlog::info("[SETTINGS] Loaded from INI");
+        // Validate and clamp loaded values to reasonable ranges
+        textFieldX = std::clamp(textFieldX, 0.0f, 3840.0f);      // Max 4K width
+        textFieldY = std::clamp(textFieldY, 0.0f, 2160.0f);      // Max 4K height
+        textFieldFontSize = std::clamp(textFieldFontSize, 8, 72);
+        // textFieldColor: allow any value (0x000000 to 0xFFFFFF valid)
+
+        textInputWidth = std::clamp(textInputWidth, 200, 3840);
+        textInputHeight = std::clamp(textInputHeight, 100, 2160);
+        textInputFontSize = std::clamp(textInputFontSize, 8, 72);
+        textInputAlignment = std::clamp(textInputAlignment, 0, 2);  // 0=left, 1=center, 2=right
+
+        noteHotkeyScanCode = std::clamp(noteHotkeyScanCode, 0, 255);  // Valid scan code range
+
+        spdlog::info("[SETTINGS] Loaded and validated from INI");
     }
 
     // TextField
@@ -145,64 +261,140 @@ private:
 // Note Manager
 //=============================================================================
 
+/**
+ * @class NoteManager
+ * @brief Thread-safe manager for quest and general notes with SKSE serialization.
+ *
+ * Manages a collection of notes indexed by quest FormID. Thread-safe for
+ * concurrent read/write operations using shared_mutex. Notes are persisted
+ * across game sessions via SKSE co-save system.
+ *
+ * @note Uses FormID 0xFFFFFFFF (GENERAL_NOTE_ID) for general notes not tied to specific quests.
+ * @thread_safety All public methods are thread-safe.
+ */
 class NoteManager {
 public:
     static constexpr std::uint32_t kDataKey = 'PNOT';  // PersonalNOTes
     static constexpr std::uint32_t kSerializationVersion = 2;
     static constexpr RE::FormID GENERAL_NOTE_ID = 0xFFFFFFFF;  // Special ID for general notes
 
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to singleton instance (never null, valid for program lifetime)
+     */
     static NoteManager* GetSingleton() {
         static NoteManager instance;
         return &instance;
     }
 
-    std::string GetNoteForQuest(RE::FormID questID) const {
+    /**
+     * @brief Retrieves note text for a specific quest.
+     * @param questID The quest's FormID (use GENERAL_NOTE_ID for general notes)
+     * @return Note text if exists, empty string otherwise
+     * @thread_safety Thread-safe (uses shared lock)
+     */
+    [[nodiscard]] std::string GetNoteForQuest(RE::FormID questID) const {
         std::shared_lock lock(lock_);
 
-        auto it = notesByQuest_.find(questID);
-        if (it != notesByQuest_.end()) {
+        if (auto it = notesByQuest_.find(questID); it != notesByQuest_.end()) {
             return it->second.text;
         }
         return "";
     }
 
+    /**
+     * @brief Saves or updates a note for a quest.
+     * @param questID The quest's FormID (0 is invalid, GENERAL_NOTE_ID for general notes)
+     * @param text Note text to save (empty string deletes the note)
+     * @thread_safety Thread-safe (uses unique lock)
+     * @note Input is validated and sanitized before storage
+     */
     void SaveNoteForQuest(RE::FormID questID, const std::string& text) {
+        // Validate FormID
+        if (questID == 0) {
+            spdlog::warn("[NOTE] Invalid quest ID: 0");
+            return;
+        }
+
+        // Validate quest exists (except for GENERAL_NOTE_ID)
+        if (questID != GENERAL_NOTE_ID) {
+            auto quest = RE::TESForm::LookupByID<RE::TESQuest>(questID);
+            if (!quest) {
+                spdlog::warn("[NOTE] Quest 0x{:X} not found, saving note anyway", questID);
+                // Allow saving anyway - quest might be from another plugin
+            }
+        }
+
         std::unique_lock lock(lock_);
 
         if (text.empty()) {
             // Empty text = delete note
             notesByQuest_.erase(questID);
         } else {
-            Note note(text, questID);
+            // Sanitize input text before storage
+            std::string sanitizedText = NoteUtils::SanitizeNoteText(text);
+
+            Note note(sanitizedText, questID);
             notesByQuest_[questID] = note;
         }
     }
 
-    bool HasNoteForQuest(RE::FormID questID) const {
+    /**
+     * @brief Checks if a note exists for a quest.
+     * @param questID The quest's FormID
+     * @return true if note exists, false otherwise
+     * @thread_safety Thread-safe (uses shared lock)
+     */
+    [[nodiscard]] bool HasNoteForQuest(RE::FormID questID) const {
         std::shared_lock lock(lock_);
         return notesByQuest_.find(questID) != notesByQuest_.end();
     }
 
+    /**
+     * @brief Deletes a note for a quest.
+     * @param questID The quest's FormID
+     * @thread_safety Thread-safe (uses unique lock)
+     */
     void DeleteNoteForQuest(RE::FormID questID) {
         std::unique_lock lock(lock_);
         notesByQuest_.erase(questID);
     }
 
-    // General note methods (not tied to a quest)
-    std::string GetGeneralNote() const {
+    /**
+     * @brief Get general note (not tied to any quest).
+     * @return General note text, empty if none
+     * @thread_safety Thread-safe
+     */
+    [[nodiscard]] std::string GetGeneralNote() const {
         return GetNoteForQuest(GENERAL_NOTE_ID);
     }
 
+    /**
+     * @brief Save general note (not tied to any quest).
+     * @param text Note text to save
+     * @thread_safety Thread-safe
+     */
     void SaveGeneralNote(const std::string& text) {
         SaveNoteForQuest(GENERAL_NOTE_ID, text);
     }
 
-    std::unordered_map<RE::FormID, Note> GetAllNotes() const {
+    /**
+     * @brief Get all notes as a map.
+     * @return Copy of all notes indexed by quest FormID
+     * @warning Returns a copy - expensive for large note collections
+     * @thread_safety Thread-safe (uses shared lock)
+     */
+    [[nodiscard]] std::unordered_map<RE::FormID, Note> GetAllNotes() const {
         std::shared_lock lock(lock_);
         return notesByQuest_;
     }
 
-    size_t GetNoteCount() const {
+    /**
+     * @brief Get total number of notes.
+     * @return Count of all stored notes
+     * @thread_safety Thread-safe (uses shared lock)
+     */
+    [[nodiscard]] size_t GetNoteCount() const {
         std::shared_lock lock(lock_);
         return notesByQuest_.size();
     }
@@ -225,7 +417,7 @@ public:
             }
         }
 
-        spdlog::info("[SAVE] Saved {} notes", count);
+        spdlog::info("[SAVE] Saved {} notes (version {})", count, kSerializationVersion);
     }
 
     void Load(SKSE::SerializationInterface* intfc) {
@@ -239,33 +431,48 @@ public:
         while (intfc->GetNextRecordInfo(type, version, length)) {
             if (type == kDataKey) {
                 if (version == 1) {
-                    spdlog::warn("[LOAD] Version 1 save data found (Phase 1/2). Not compatible with Phase 3 quest notes. Skipping.");
+                    spdlog::warn("[LOAD] Version 1 save data found (expected v{}). Legacy format not compatible. Skipping.", kSerializationVersion);
                     continue;
                 }
                 if (version != kSerializationVersion) {
-                    spdlog::warn("[LOAD] Unknown version: {}", version);
+                    spdlog::warn("[LOAD] Unknown save version: {} (expected v{}). Skipping.", version, kSerializationVersion);
                     continue;
                 }
 
-                // Read note count
-                std::uint32_t count = 0;
-                if (!intfc->ReadRecordData(&count, sizeof(count))) {
-                    spdlog::error("[LOAD] Failed to read note count");
-                    return;
-                }
-
-                // Read each note
-                for (std::uint32_t i = 0; i < count; ++i) {
-                    Note note;
-                    if (note.Load(intfc)) {
-                        notesByQuest_[note.questID] = note;
-                    } else {
-                        spdlog::error("[LOAD] Failed to load note {}", i);
-                    }
-                }
-
-                spdlog::info("[LOAD] Loaded {} notes", notesByQuest_.size());
+                LoadNotesData(intfc);
             }
+        }
+    }
+
+    void LoadNotesData(SKSE::SerializationInterface* intfc) {
+        // Read note count
+        std::uint32_t count = 0;
+        if (!intfc->ReadRecordData(&count, sizeof(count))) {
+            spdlog::error("[LOAD] Failed to read note count");
+            return;  // Now safe - won't break record iteration
+        }
+
+        std::uint32_t loadedCount = 0;
+        std::uint32_t failedCount = 0;
+
+        // Read each note
+        for (std::uint32_t i = 0; i < count; ++i) {
+            Note note;
+            if (note.Load(intfc)) {
+                notesByQuest_[note.questID] = note;
+                loadedCount++;
+            } else {
+                spdlog::error("[LOAD] Failed to load note {}/{}", i + 1, count);
+                failedCount++;
+                // Continue loading remaining notes instead of failing completely
+            }
+        }
+
+        if (failedCount > 0) {
+            spdlog::warn("[LOAD] Loaded {}/{} notes successfully ({} failed, version {})",
+                         loadedCount, count, failedCount, kSerializationVersion);
+        } else {
+            spdlog::info("[LOAD] Loaded {}/{} notes successfully (version {})", loadedCount, count, kSerializationVersion);
         }
     }
 
@@ -295,7 +502,7 @@ namespace PapyrusBridge {
 // Journal Quest Detection
 //=============================================================================
 
-RE::FormID GetCurrentQuestInJournal() {
+[[nodiscard]] RE::FormID GetCurrentQuestInJournal() {
     auto ui = RE::UI::GetSingleton();
     if (!ui || !ui->IsMenuOpen("Journal Menu")) {
         return 0;  // Not in journal
@@ -335,19 +542,57 @@ RE::FormID GetCurrentQuestInJournal() {
 // Journal Note Helper
 //=============================================================================
 
+/**
+ * @class JournalNoteHelper
+ * @brief Manages UI overlay in Journal Menu showing note status.
+ *
+ * Creates and manages a TextField in the Journal Menu that displays whether
+ * the selected quest has an associated note. Handles lifecycle (open/close)
+ * and updates text based on quest selection changes.
+ */
 class JournalNoteHelper {
 public:
+    /**
+     * @brief Get the singleton instance.
+     * @return Pointer to singleton instance (never null)
+     */
     static JournalNoteHelper* GetSingleton() {
         static JournalNoteHelper instance;
         return &instance;
     }
 
+    /**
+     * @brief Initialize UI elements when Journal Menu opens.
+     *
+     * Creates TextField overlay with configured position and styling.
+     * Stores references to GFx objects and journal menu.
+     */
     void OnJournalOpen();
+
+    /**
+     * @brief Cleanup when Journal Menu closes.
+     *
+     * Clears GFx object references and resets state tracking.
+     */
     void OnJournalClose();
+
+    /**
+     * @brief Update TextField to reflect note status for current quest.
+     * @param questID The currently selected quest FormID (0 = none selected)
+     * @param forceUpdate If true, update even if quest hasn't changed
+     */
     void UpdateTextField(RE::FormID questID, bool forceUpdate = false);
 
 private:
     JournalNoteHelper() = default;
+
+    /**
+     * Checks if the helper is properly initialized and ready to use.
+     * @return true if TextField and menu references are valid
+     */
+    bool IsInitialized() const {
+        return noteTextField_.IsObject() && journalMenu_ != nullptr;
+    }
 
     RE::GFxValue noteTextField_;
     RE::GFxValue textFormat_;
@@ -382,12 +627,12 @@ void JournalNoteHelper::OnJournalOpen() {
             RE::GFxValue textField;
             RE::GFxValue createArgs[6];
             auto settings = SettingsManager::GetSingleton();
-            createArgs[0].SetString("questNoteTextField");  // name
-            createArgs[1].SetNumber(999999);                // VERY high depth to be on absolute top
-            createArgs[2].SetNumber(settings->textFieldX);  // TOP-LEFT x position
-            createArgs[3].SetNumber(settings->textFieldY);  // TOP-LEFT y position
-            createArgs[4].SetNumber(600);                   // width
-            createArgs[5].SetNumber(50);                    // height
+            createArgs[0].SetString("questNoteTextField");           // name
+            createArgs[1].SetNumber(UIConstants::TEXTFIELD_TOP_DEPTH);   // VERY high depth to be on absolute top
+            createArgs[2].SetNumber(settings->textFieldX);           // TOP-LEFT x position
+            createArgs[3].SetNumber(settings->textFieldY);           // TOP-LEFT y position
+            createArgs[4].SetNumber(UIConstants::TEXTFIELD_DEFAULT_WIDTH);   // width
+            createArgs[5].SetNumber(UIConstants::TEXTFIELD_DEFAULT_HEIGHT);  // height
 
             root.Invoke("createTextField", &textField, createArgs, 6);
 
@@ -440,8 +685,8 @@ void JournalNoteHelper::OnJournalClose() {
 }
 
 void JournalNoteHelper::UpdateTextField(RE::FormID questID, bool forceUpdate) {
-    if (!noteTextField_.IsObject()) {
-        return; // TextField not initialized
+    if (!IsInitialized()) {
+        return; // Helper not properly initialized
     }
 
     // Only update if quest changed (prevent spam), unless forced
@@ -504,8 +749,7 @@ public:
         // Track journal open/close for JournalNoteHelper lifecycle
         auto player = RE::PlayerCharacter::GetSingleton();
         if (player && player->Is3DLoaded()) {
-            auto ui = RE::UI::GetSingleton();
-            bool isJournalOpen = ui && ui->IsMenuOpen("Journal Menu");
+            bool isJournalOpen = IsJournalCurrentlyOpen();
 
             if (isJournalOpen && !wasJournalOpen_) {
                 JournalNoteHelper::GetSingleton()->OnJournalOpen();
@@ -532,16 +776,16 @@ public:
                 }
 
                 // Check if in Journal Menu
-                auto ui = RE::UI::GetSingleton();
-                bool inJournal = ui && ui->IsMenuOpen("Journal Menu");
+                bool inJournal = IsJournalCurrentlyOpen();
                 uint32_t keyCode = buttonEvent->idCode;
 
                 if (inJournal) {
                     // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
                     // Use IsUp() so Journal processes the input first, then we read the updated selection
-                    // Arrow Up = 200, Arrow Down = 208, Mouse clicks = 256
                     if (buttonEvent->IsUp()) {
-                        if (keyCode == 200 || keyCode == 208 || keyCode == 256) { // Up, Down, or Left Mouse
+                        if (keyCode == KeyCodes::ARROW_UP ||
+                            keyCode == KeyCodes::ARROW_DOWN ||
+                            keyCode == KeyCodes::MOUSE_LEFT) {
                             RE::FormID questID = GetCurrentQuestInJournal();
                             JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
                         }
@@ -561,8 +805,7 @@ public:
             }
             // Handle mouse move events (hover detection in Journal)
             else if (eventType == RE::INPUT_EVENT_TYPE::kMouseMove) {
-                auto ui = RE::UI::GetSingleton();
-                if (ui && ui->IsMenuOpen("Journal Menu")) {
+                if (IsJournalCurrentlyOpen()) {
                     // Mouse moved in Journal - check if quest selection changed
                     RE::FormID questID = GetCurrentQuestInJournal();
                     JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
@@ -579,10 +822,18 @@ private:
 
     bool wasJournalOpen_ = false;  // Track journal state across events
 
+    /**
+     * Helper to check if journal menu is currently open.
+     * @return true if Journal Menu is open
+     */
+    [[nodiscard]] bool IsJournalCurrentlyOpen() const {
+        auto ui = RE::UI::GetSingleton();
+        return ui && ui->IsMenuOpen("Journal Menu");
+    }
+
     void OnQuestNoteHotkey() {
         // MUST be in Journal Menu
-        auto ui = RE::UI::GetSingleton();
-        if (!ui || !ui->IsMenuOpen("Journal Menu")) {
+        if (!IsJournalCurrentlyOpen()) {
             return;
         }
 
@@ -599,11 +850,34 @@ private:
 };
 
 //=============================================================================
+// Papyrus Bridge Utilities
+//=============================================================================
+
+/**
+ * Converts Papyrus int32 to FormID.
+ * Papyrus VM represents FormIDs as signed int32, but the engine uses uint32.
+ * High-value FormIDs (e.g., 0xFE000000+ for modded forms) become negative.
+ * This performs proper reinterpretation of the bit pattern.
+ *
+ * @param papyrusID The signed int32 from Papyrus
+ * @return The properly converted FormID
+ */
+inline RE::FormID PapyrusIntToFormID(std::int32_t papyrusID) {
+    return static_cast<RE::FormID>(static_cast<std::uint32_t>(papyrusID));
+}
+
+//=============================================================================
 // Papyrus Bridge
 //=============================================================================
 
 namespace PapyrusBridge {
-    // Show quest note input (called from C++ InputHandler)
+    /**
+     * @brief Show quest note input dialog.
+     * @param questID The quest FormID to associate the note with
+     *
+     * Called from C++ InputHandler when hotkey pressed in Journal Menu.
+     * Displays Extended Vanilla Menus text input with existing note content.
+     */
     void ShowQuestNoteInput(RE::FormID questID) {
         auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!vm) {
@@ -637,18 +911,23 @@ namespace PapyrusBridge {
         vm->DispatchStaticCall("PersonalNotes", "ShowQuestNoteInput", args, callback);
     }
 
-    // Save quest note (called from Papyrus)
+    /**
+     * @brief Save quest note callback (called from Papyrus).
+     * @param questIDSigned Quest FormID as signed int32 (Papyrus representation)
+     * @param noteText Note text from user input
+     *
+     * Native function registered for Papyrus. Converts FormID and saves note.
+     */
     void SaveQuestNote(RE::StaticFunctionTag*, std::int32_t questIDSigned, RE::BSFixedString noteText) {
-        // Papyrus passes int32, but FormIDs are unsigned - convert properly
-        // Modded quest IDs like 0xFE000000+ will be negative in int32
-        RE::FormID questID = static_cast<RE::FormID>(static_cast<std::uint32_t>(questIDSigned));
+        // Convert Papyrus int32 to FormID (handles modded forms with high FormIDs)
+        RE::FormID questID = PapyrusIntToFormID(questIDSigned);
 
         if (questID == 0) {
             spdlog::warn("[NOTE] Invalid quest ID");
             return;
         }
 
-        std::string text(noteText.c_str());
+        std::string text{noteText.c_str()};
         NoteManager::GetSingleton()->SaveNoteForQuest(questID, text);
 
         // Update TextField to reflect new note state immediately (force update even if same quest)
@@ -657,7 +936,12 @@ namespace PapyrusBridge {
         RE::DebugNotification("Quest note saved!");
     }
 
-    // Show general note input (called from C++ InputHandler)
+    /**
+     * @brief Show general note input dialog.
+     *
+     * Called from C++ InputHandler when hotkey pressed during gameplay (not in Journal).
+     * Displays Extended Vanilla Menus text input with existing general note content.
+     */
     void ShowGeneralNoteInput() {
         auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!vm) {
@@ -673,8 +957,8 @@ namespace PapyrusBridge {
 
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
-            std::move(RE::BSFixedString("")),           // questName (empty for general)
-            std::move(RE::BSFixedString(existingText)),
+            RE::BSFixedString(""),           // questName (empty for general)
+            RE::BSFixedString(existingText),
             static_cast<std::int32_t>(settings->textInputWidth),
             static_cast<std::int32_t>(settings->textInputHeight),
             static_cast<std::int32_t>(settings->textInputFontSize),
@@ -685,7 +969,12 @@ namespace PapyrusBridge {
         vm->DispatchStaticCall("PersonalNotes", "ShowGeneralNoteInput", args, callback);
     }
 
-    // Save general note (called from Papyrus)
+    /**
+     * @brief Save general note callback (called from Papyrus).
+     * @param noteText Note text from user input
+     *
+     * Native function registered for Papyrus. Saves general note not tied to any quest.
+     */
     void SaveGeneralNote(RE::StaticFunctionTag*, RE::BSFixedString noteText) {
         std::string text(noteText.c_str());
         NoteManager::GetSingleton()->SaveGeneralNote(text);
@@ -693,7 +982,14 @@ namespace PapyrusBridge {
         RE::DebugNotification("General note saved!");
     }
 
-    // Register native functions
+    /**
+     * @brief Register native Papyrus functions.
+     * @param vm Papyrus virtual machine
+     * @return true on success
+     *
+     * Registers SaveQuestNote and SaveGeneralNote as native functions
+     * callable from Papyrus scripts.
+     */
     bool Register(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("SaveQuestNote", "PersonalNotesNative", SaveQuestNote);
         vm->RegisterFunction("SaveGeneralNote", "PersonalNotesNative", SaveGeneralNote);
@@ -712,7 +1008,10 @@ void SetupLog() {
     spdlog::set_default_logger(std::move(logger));
     spdlog::set_level(spdlog::level::info);
     spdlog::flush_on(spdlog::level::info);
-    spdlog::info("PersonalNotes v1.0 initialized");
+    spdlog::info("PersonalNotes v{}.{}.{} initialized",
+                 PERSONAL_NOTES_VERSION_MAJOR,
+                 PERSONAL_NOTES_VERSION_MINOR,
+                 PERSONAL_NOTES_VERSION_PATCH);
 }
 
 //=============================================================================
@@ -787,7 +1086,10 @@ void InitializePlugin() {
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
 
-    spdlog::info("Plugin loading...");
+    spdlog::info("PersonalNotes v{}.{}.{} loading...",
+                 PERSONAL_NOTES_VERSION_MAJOR,
+                 PERSONAL_NOTES_VERSION_MINOR,
+                 PERSONAL_NOTES_VERSION_PATCH);
     spdlog::info("SKSE version: {}.{}.{}",
         skse->RuntimeVersion().major(),
         skse->RuntimeVersion().minor(),
