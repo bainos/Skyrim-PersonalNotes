@@ -10,7 +10,7 @@ Function ShowQuestNoteInput(int questID, string questName, string existingText) 
     String prompt = "Note for: " + questName
 
     ; Show text input (pre-filled with existing text if any)
-    String result = ExtendedVanillaMenus.TextInput(prompt, existingText)
+    String result = ExtendedVanillaMenus.TextInput(prompt, existingText, Width = 500, Height = 400, align = 0, FontSize = 14)
 
     ; Filter out special cancel string from ExtendedVanillaMenus
     If result == "EVM_TextInput_Cancelled"
@@ -28,7 +28,7 @@ EndFunction
 ;   existingText - Current general note text (empty string if no note exists)
 Function ShowGeneralNoteInput(string questName, string existingText) Global
     ; Show text input with "Personal Notes" prompt
-    String result = ExtendedVanillaMenus.TextInput("Personal Notes", existingText)
+    String result = ExtendedVanillaMenus.TextInput("Personal Notes", existingText, Width = 500, Height = 400, align = 0, FontSize = 14)
 
     ; Filter out special cancel string from ExtendedVanillaMenus
     If result == "EVM_TextInput_Cancelled"
