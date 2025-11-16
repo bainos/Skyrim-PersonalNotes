@@ -136,12 +136,6 @@ public:
 
     void SaveGeneralNote(const std::string& text) {
         SaveNoteForQuest(GENERAL_NOTE_ID, text);
-
-        if (text.empty()) {
-            spdlog::info("[NOTE] Deleted general note");
-        } else {
-            spdlog::info("[NOTE] Saved general note ({} chars)", text.length());
-        }
     }
 
     std::unordered_map<RE::FormID, Note> GetAllNotes() const {
@@ -243,55 +237,38 @@ namespace PapyrusBridge {
 //=============================================================================
 
 RE::FormID GetCurrentQuestInJournal() {
-    spdlog::info("[JOURNAL] GetCurrentQuestInJournal() entry");
-
     auto ui = RE::UI::GetSingleton();
     if (!ui || !ui->IsMenuOpen("Journal Menu")) {
-        spdlog::info("[JOURNAL] Not in journal menu");
         return 0;  // Not in journal
     }
 
-    spdlog::info("[JOURNAL] Getting JournalMenu pointer");
     auto journalMenu = ui->GetMenu<RE::JournalMenu>();
     if (!journalMenu) {
         spdlog::error("[JOURNAL] Failed to get JournalMenu pointer");
         return 0;
     }
 
-    spdlog::info("[JOURNAL] Getting runtime data");
     // Access quest tab and get selected entry
     auto& rtData = journalMenu->GetRuntimeData();
     auto& questsTab = rtData.questsTab;
 
-    spdlog::info("[JOURNAL] Checking questsTab.unk18");
     if (!questsTab.unk18.IsObject()) {
-        spdlog::info("[JOURNAL] questsTab.unk18 is not an Object");
         return 0;
     }
 
-    spdlog::info("[JOURNAL] Getting selectedEntry");
     // Get selectedEntry.formID
     RE::GFxValue selectedEntry;
     if (!questsTab.unk18.GetMember("selectedEntry", &selectedEntry) || !selectedEntry.IsObject()) {
-        spdlog::info("[JOURNAL] No quest selected");
         return 0;
     }
 
-    spdlog::info("[JOURNAL] Getting formID member");
     RE::GFxValue formIDValue;
     if (!selectedEntry.GetMember("formID", &formIDValue) || !formIDValue.IsNumber()) {
         spdlog::warn("[JOURNAL] selectedEntry has no formID");
         return 0;
     }
 
-    spdlog::info("[JOURNAL] Extracting FormID value");
     RE::FormID questID = static_cast<RE::FormID>(formIDValue.GetUInt());
-    if (questID == 0) {
-        spdlog::info("[JOURNAL] Quest FormID is 0");
-        return 0;
-    }
-
-    spdlog::info("[JOURNAL] Found quest 0x{:X}", questID);
     return questID;
 }
 
@@ -314,7 +291,7 @@ public:
 
     void OnJournalOpen();
     void OnJournalClose();
-    void UpdateTextField(RE::FormID questID);
+    void UpdateTextField(RE::FormID questID, bool forceUpdate = false);
 
 private:
     JournalNoteHelper() = default;
@@ -322,6 +299,7 @@ private:
     RE::GFxValue noteTextField_;
     RE::GFxValue textFormat_;
     RE::GPtr<RE::JournalMenu> journalMenu_;
+    RE::FormID lastQuestID_ = 0;  // Track last quest to detect changes
 };
 
 //=============================================================================
@@ -488,60 +466,39 @@ void QuestNoteHUDMenu::UpdateNoteIndicator(RE::FormID questID, const std::string
     }
 
     std::string text = "[" + questName + "] - Note present";
-
-    spdlog::info("[HUD] About to call SetText with: {}", text);
     noteIndicatorText_.SetText(text.c_str());
-    spdlog::info("[HUD] SetText returned successfully");
 }
 
 void QuestNoteHUDMenu::ClearNoteIndicator() {
-    spdlog::info("[HUD] ClearNoteIndicator() called");
     if (noteIndicatorText_.IsUndefined() || !noteIndicatorText_.IsObject()) {
-        spdlog::info("[HUD] Note indicator text is invalid, returning");
         return;
     }
 
-    spdlog::info("[HUD] About to call SetText(\"\")");
     noteIndicatorText_.SetText("");
-    spdlog::info("[HUD] SetText(\"\") returned - Note indicator cleared");
 }
 
 void QuestNoteHUDMenu::UpdateQuestTracking() {
-    spdlog::info("[HUD] UpdateQuestTracking() called");
-
     // Throttle Scaleform queries to 10 times/sec (GetCurrentQuestInJournal is expensive)
     auto now = std::chrono::steady_clock::now();
     auto pollElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPollTime_);
     if (pollElapsed.count() < 100) {
-        spdlog::info("[HUD] UpdateQuestTracking() skipped (throttled)");
         return;  // Skip this frame
     }
     lastPollTime_ = now;
 
-    spdlog::info("[HUD] About to call GetCurrentQuestInJournal()");
     // Get currently selected quest
     RE::FormID questID = GetCurrentQuestInJournal();
-    spdlog::info("[HUD] GetCurrentQuestInJournal() returned 0x{:X}", questID);
 
     // Quest changed?
     if (questID != currentQuestID_) {
-        spdlog::info("[HUD] Quest changed from 0x{:X} to 0x{:X}", currentQuestID_, questID);
         currentQuestID_ = questID;
         selectionTime_ = std::chrono::steady_clock::now();
         notificationShown_ = false;
 
-        spdlog::info("[HUD] About to call ClearNoteIndicator()");
         // Clear indicator when quest changes
         ClearNoteIndicator();
-        spdlog::info("[HUD] ClearNoteIndicator() returned");
-
-        if (questID != 0) {
-            spdlog::info("[HUD] Quest changed to 0x{:X}", questID);
-        }
-        spdlog::info("[HUD] UpdateQuestTracking() returning after quest change");
         return;
     }
-    spdlog::info("[HUD] Quest unchanged, checking hover delay");
 
     // No quest selected or already shown?
     if (questID == 0 || notificationShown_) return;
@@ -557,7 +514,6 @@ void QuestNoteHUDMenu::UpdateQuestTracking() {
             auto quest = RE::TESForm::LookupByID<RE::TESQuest>(questID);
             std::string questName = quest ? quest->GetName() : "Unknown Quest";
             UpdateNoteIndicator(questID, questName);
-            spdlog::info("[HUD] Quest 0x{:X} has note", questID);
         }
     }
 }
@@ -751,8 +707,6 @@ void DumpGFxValue(const RE::GFxValue& val, const std::string& path, int depth = 
 }
 
 void JournalNoteHelper::OnJournalOpen() {
-    spdlog::info("[HELPER] Journal opened - creating TextField");
-
     auto ui = RE::UI::GetSingleton();
     if (!ui) {
         spdlog::error("[HELPER] Failed to get UI singleton");
@@ -812,12 +766,10 @@ void JournalNoteHelper::OnJournalOpen() {
                 noteTextField_ = textField;
                 textFormat_ = textFormat;
 
-                spdlog::info("[HELPER] TextField created successfully");
-
                 // Get initial quest and update TextField
                 RE::FormID currentQuest = GetCurrentQuestInJournal();
                 UpdateTextField(currentQuest);
-                spdlog::info("[HELPER] Initial quest update: 0x{:X}", currentQuest);
+                lastQuestID_ = currentQuest;  // Initialize tracking
             } else {
                 spdlog::error("[HELPER] createTextField failed");
             }
@@ -826,18 +778,24 @@ void JournalNoteHelper::OnJournalOpen() {
 }
 
 void JournalNoteHelper::OnJournalClose() {
-    spdlog::info("[HELPER] Journal closed");
-
     // Clear references
     noteTextField_.SetUndefined();
     textFormat_.SetUndefined();
     journalMenu_ = nullptr;
+    lastQuestID_ = 0;  // Reset tracking
 }
 
-void JournalNoteHelper::UpdateTextField(RE::FormID questID) {
+void JournalNoteHelper::UpdateTextField(RE::FormID questID, bool forceUpdate) {
     if (!noteTextField_.IsObject()) {
         return; // TextField not initialized
     }
+
+    // Only update if quest changed (prevent spam), unless forced
+    if (!forceUpdate && questID == lastQuestID_) {
+        return;
+    }
+
+    lastQuestID_ = questID;  // Track current quest
 
     std::string message;
 
@@ -861,10 +819,6 @@ void JournalNoteHelper::UpdateTextField(RE::FormID questID) {
     // Reapply format (needed after text change)
     if (textFormat_.IsObject()) {
         noteTextField_.Invoke("setTextFormat", nullptr, &textFormat_, 1);
-    }
-
-    if (!message.empty()) {
-        spdlog::info("[HELPER] Quest 0x{:X}: {}", questID, message);
     }
 }
 
@@ -913,48 +867,53 @@ public:
             return RE::BSEventNotifyControl::kContinue;
         }
 
-        // Process button events only
+        // Process input events
         for (auto event = *a_event; event; event = event->next) {
-            if (event->eventType != RE::INPUT_EVENT_TYPE::kButton) {
-                continue;
-            }
+            auto eventType = event->eventType;
 
-            auto buttonEvent = event->AsButtonEvent();
-            if (!buttonEvent) {
-                continue;
-            }
+            // Handle button events (keyboard, mouse clicks)
+            if (eventType == RE::INPUT_EVENT_TYPE::kButton) {
+                auto buttonEvent = event->AsButtonEvent();
+                if (!buttonEvent) {
+                    continue;
+                }
 
-            // Check if in Journal Menu
-            auto ui = RE::UI::GetSingleton();
-            bool inJournal = ui && ui->IsMenuOpen("Journal Menu");
-            uint32_t keyCode = buttonEvent->idCode;
+                // Check if in Journal Menu
+                auto ui = RE::UI::GetSingleton();
+                bool inJournal = ui && ui->IsMenuOpen("Journal Menu");
+                uint32_t keyCode = buttonEvent->idCode;
 
-            if (inJournal) {
-                // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
-                // Use IsUp() so Journal processes the input first, then we read the updated selection
-                // Arrow Up = 200, Arrow Down = 208, Mouse clicks = 256
-                if (buttonEvent->IsUp()) {
-                    if (keyCode == 200 || keyCode == 208 || keyCode == 256) { // Up, Down, or Left Mouse
-                        RE::FormID questID = GetCurrentQuestInJournal();
-                        JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
-                        spdlog::info("[INPUT] Navigation detected - updated TextField for quest 0x{:X}", questID);
+                if (inJournal) {
+                    // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
+                    // Use IsUp() so Journal processes the input first, then we read the updated selection
+                    // Arrow Up = 200, Arrow Down = 208, Mouse clicks = 256
+                    if (buttonEvent->IsUp()) {
+                        if (keyCode == 200 || keyCode == 208 || keyCode == 256) { // Up, Down, or Left Mouse
+                            RE::FormID questID = GetCurrentQuestInJournal();
+                            JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
+                        }
+                    }
+                }
+
+                // Comma key (scan code 51) - context-dependent behavior
+                if (buttonEvent->IsDown() && keyCode == 51) {
+                    if (inJournal) {
+                        // In Journal Menu → Quest note
+                        OnQuestNoteHotkey();
+                    } else {
+                        // During gameplay → General note
+                        PapyrusBridge::ShowGeneralNoteInput();
                     }
                 }
             }
-
-            // Comma key (scan code 51) - context-dependent behavior
-            if (buttonEvent->IsDown() && keyCode == 51) {
-                spdlog::info("[INPUT] Comma detected - inJournal: {}", inJournal);
-
-                if (inJournal) {
-                    // In Journal Menu → Quest note
-                    spdlog::info("[INPUT] Calling OnQuestNoteHotkey...");
-                    OnQuestNoteHotkey();
-                } else {
-                    // During gameplay → General note
-                    spdlog::info("[INPUT] Calling ShowGeneralNoteInput...");
-                    PapyrusBridge::ShowGeneralNoteInput();
-                    spdlog::info("[INPUT] General note hotkey pressed");
+            // Handle mouse move events (hover detection in Journal)
+            else if (eventType == RE::INPUT_EVENT_TYPE::kMouseMove) {
+                auto ui = RE::UI::GetSingleton();
+                if (ui && ui->IsMenuOpen("Journal Menu")) {
+                    // Mouse moved in Journal - check if quest selection changed
+                    RE::FormID questID = GetCurrentQuestInJournal();
+                    JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
+                    // Note: UpdateTextField has built-in change detection to prevent spam
                 }
             }
         }
@@ -1014,7 +973,6 @@ namespace PapyrusBridge {
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
 
         vm->DispatchStaticCall("PersonalNotes", "ShowQuestNoteInput", args, callback);
-        spdlog::info("[PAPYRUS] Note input opened for quest 0x{:X}", questID);
     }
 
     // Save quest note (called from Papyrus)
@@ -1031,59 +989,37 @@ namespace PapyrusBridge {
         std::string text(noteText.c_str());
         NoteManager::GetSingleton()->SaveNoteForQuest(questID, text);
 
-        // Update TextField to reflect new note state immediately
-        JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
-
-        if (text.empty()) {
-            spdlog::info("[NOTE] Deleted note for quest 0x{:X}", questID);
-        } else {
-            spdlog::info("[NOTE] Saved note for quest 0x{:X}", questID);
-        }
+        // Update TextField to reflect new note state immediately (force update even if same quest)
+        JournalNoteHelper::GetSingleton()->UpdateTextField(questID, true);
 
         RE::DebugNotification("Quest note saved!");
     }
 
     // Show general note input (called from C++ InputHandler)
     void ShowGeneralNoteInput() {
-        spdlog::info("[PAPYRUS] ShowGeneralNoteInput ENTRY");
-
         auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        spdlog::info("[PAPYRUS] VM obtained: {}", (void*)vm);
-
         if (!vm) {
             spdlog::error("[PAPYRUS] Failed to get VM");
             return;
         }
 
-        spdlog::info("[PAPYRUS] Getting existing general note...");
         // Get existing general note text
         std::string existingText = NoteManager::GetSingleton()->GetGeneralNote();
-        spdlog::info("[PAPYRUS] Existing text: {} chars", existingText.length());
 
-        spdlog::info("[PAPYRUS] Creating function arguments...");
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
             std::move(RE::BSFixedString("")),           // questName (empty for general)
             std::move(RE::BSFixedString(existingText))
         );
 
-        spdlog::info("[PAPYRUS] Arguments created, calling DispatchStaticCall...");
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-
         vm->DispatchStaticCall("PersonalNotes", "ShowGeneralNoteInput", args, callback);
-        spdlog::info("[PAPYRUS] General note input opened");
     }
 
     // Save general note (called from Papyrus)
     void SaveGeneralNote(RE::StaticFunctionTag*, RE::BSFixedString noteText) {
         std::string text(noteText.c_str());
         NoteManager::GetSingleton()->SaveGeneralNote(text);
-
-        if (text.empty()) {
-            spdlog::info("[NOTE] Deleted general note");
-        } else {
-            spdlog::info("[NOTE] Saved general note");
-        }
 
         RE::DebugNotification("General note saved!");
     }

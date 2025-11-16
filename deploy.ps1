@@ -4,6 +4,10 @@ $localDestPath = "mod"
 
 # Define source and destination pairs
 $fileCopies = @(
+    #@{
+    #    Source = "toast\toast.swf"
+    #    Dest = "$localDestPath\interface\toast.swf"
+    #},
     @{
         Source = "out\PersonalNotes.dll"
         Dest = "$localDestPath\SKSE\Plugins\PersonalNotes.dll"
