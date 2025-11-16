@@ -41,3 +41,34 @@ Function ShowGeneralNoteInput(string questName, string existingText, int width, 
     ; Save the general note (empty result = delete)
     PersonalNotesNative.SaveGeneralNote(result)
 EndFunction
+
+; Called from C++ when quick access hotkey pressed (dot key by default)
+; Parameters:
+;   questNames - Array of quest names (or "General Note")
+;   notePreviews - Array of note text previews (for list display)
+;   noteTexts - Array of full note texts
+;   questIDs - Array of quest FormIDs (-1 for general note)
+;   width, height, fontSize, alignment - TextInput settings from INI
+Function ShowNotesListMenu(string[] questNames, string[] notePreviews, string[] noteTexts, int[] questIDs, int width, int height, int fontSize, int alignment) Global
+    ; Show list menu
+    Int selectedIndex = ExtendedVanillaMenus.ListMenu(questNames, notePreviews, "Personal Notes", "$Select", "$Cancel")
+
+    ; User cancelled
+    If selectedIndex < 0 || selectedIndex >= questNames.Length
+        Return
+    EndIf
+
+    ; Get selected note details
+    Int questID = questIDs[selectedIndex]
+    String questName = questNames[selectedIndex]
+    String existingText = noteTexts[selectedIndex]
+
+    ; Show edit dialog using existing functions
+    If questID == -1
+        ; General note (FormID 0xFFFFFFFF as signed int32)
+        ShowGeneralNoteInput("", existingText, width, height, fontSize, alignment)
+    Else
+        ; Quest note
+        ShowQuestNoteInput(questID, questName, existingText, width, height, fontSize, alignment)
+    EndIf
+EndFunction

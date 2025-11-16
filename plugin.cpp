@@ -221,6 +221,7 @@ public:
 
         // Hotkey
         noteHotkeyScanCode = GetPrivateProfileIntW(L"Hotkey", L"iScanCode", 51, path);
+        quickAccessScanCode = GetPrivateProfileIntW(L"Hotkey", L"iQuickAccessScanCode", 52, path);
 
         // Validate and clamp loaded values to reasonable ranges
         textFieldX = std::clamp(textFieldX, 0.0f, 3840.0f);      // Max 4K width
@@ -234,6 +235,7 @@ public:
         textInputAlignment = std::clamp(textInputAlignment, 0, 2);  // 0=left, 1=center, 2=right
 
         noteHotkeyScanCode = std::clamp(noteHotkeyScanCode, 0, 255);  // Valid scan code range
+        quickAccessScanCode = std::clamp(quickAccessScanCode, 0, 255);  // Valid scan code range
 
         spdlog::info("[SETTINGS] Loaded and validated from INI");
     }
@@ -252,6 +254,7 @@ public:
 
     // Hotkey
     int noteHotkeyScanCode = 51;
+    int quickAccessScanCode = 52;  // dot key
 
 private:
     SettingsManager() = default;
@@ -496,6 +499,7 @@ private:
 namespace PapyrusBridge {
     void ShowQuestNoteInput(RE::FormID questID);
     void ShowGeneralNoteInput();
+    void ShowNotesListMenu();
 }
 
 //=============================================================================
@@ -802,6 +806,14 @@ public:
                         PapyrusBridge::ShowGeneralNoteInput();
                     }
                 }
+
+                // Quick access hotkey - list all notes (outside journal only)
+                if (buttonEvent->IsDown() && keyCode == SettingsManager::GetSingleton()->quickAccessScanCode) {
+                    if (!inJournal) {
+                        // Show list of all notes
+                        PapyrusBridge::ShowNotesListMenu();
+                    }
+                }
             }
             // Handle mouse move events (hover detection in Journal)
             else if (eventType == RE::INPUT_EVENT_TYPE::kMouseMove) {
@@ -980,6 +992,74 @@ namespace PapyrusBridge {
         NoteManager::GetSingleton()->SaveGeneralNote(text);
 
         RE::DebugNotification("General note saved!");
+    }
+
+    /**
+     * @brief Show list menu of all saved notes (quick access).
+     *
+     * Called from C++ InputHandler when quick access hotkey pressed.
+     * Retrieves all notes and displays them in a selectable list menu.
+     */
+    void ShowNotesListMenu() {
+        auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+        if (!vm) {
+            spdlog::error("[PAPYRUS] Failed to get VM");
+            return;
+        }
+
+        // Get all notes
+        auto notes = NoteManager::GetSingleton()->GetAllNotes();
+        if (notes.empty()) {
+            RE::DebugNotification("No notes saved");
+            return;
+        }
+
+        // Build arrays for Papyrus
+        std::vector<RE::BSFixedString> questNames;
+        std::vector<RE::BSFixedString> notePreviews;
+        std::vector<RE::BSFixedString> noteTexts;
+        std::vector<std::int32_t> questIDs;
+
+        for (const auto& [questID, note] : notes) {
+            // Quest name
+            if (questID == NoteManager::GENERAL_NOTE_ID) {
+                questNames.push_back(RE::BSFixedString("General Note"));
+            } else {
+                auto quest = RE::TESForm::LookupByID<RE::TESQuest>(questID);
+                std::string questName = quest ? quest->GetName() : "Unknown Quest";
+                questNames.push_back(RE::BSFixedString(questName));
+            }
+
+            // Note preview (first 50 chars for list display)
+            std::string preview = note.text.length() > 50
+                ? note.text.substr(0, 50) + "..."
+                : note.text;
+            notePreviews.push_back(RE::BSFixedString(preview));
+
+            // Full note text (for editing)
+            noteTexts.push_back(RE::BSFixedString(note.text));
+
+            // Quest ID
+            questIDs.push_back(static_cast<std::int32_t>(questID));
+        }
+
+        // Get TextInput settings
+        auto settings = SettingsManager::GetSingleton();
+
+        // Call Papyrus to show list menu
+        auto args = RE::MakeFunctionArguments(
+            std::move(questNames),
+            std::move(notePreviews),
+            std::move(noteTexts),
+            std::move(questIDs),
+            static_cast<std::int32_t>(settings->textInputWidth),
+            static_cast<std::int32_t>(settings->textInputHeight),
+            static_cast<std::int32_t>(settings->textInputFontSize),
+            static_cast<std::int32_t>(settings->textInputAlignment)
+        );
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+
+        vm->DispatchStaticCall("PersonalNotes", "ShowNotesListMenu", args, callback);
     }
 
     /**
