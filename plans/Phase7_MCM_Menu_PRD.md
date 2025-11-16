@@ -1,6 +1,14 @@
 # Phase 7: MCM Menu - Product Requirements Document
 
-## Overview
+## Status: ABANDONED
+
+**Reason**: MCM Helper requires a Quest with Papyrus script (ESP/ESL file) to register the menu with SkyUI. This adds complexity beyond the scope of a pure SKSE plugin. Users can manually edit `Data/SKSE/Plugins/PersonalNotes.ini` instead.
+
+**Final Decision**: Phase 6 (INI Settings) is complete and sufficient. No MCM implementation.
+
+---
+
+## Original Overview (Not Implemented)
 Create MCM menu to expose the INI settings from Phase 6. Provides in-game GUI for the same configurable parameters - no additional features.
 
 ## Prerequisites
@@ -26,17 +34,12 @@ MCM will expose the exact same settings as Phase 6 INI:
 **Hotkey Setting:**
 - Scan Code
 
-**HUD Settings:**
-- Tutorial Position (X, Y)
-- Indicator Position (X, Y)
-- Indicator Delay
-
 ### Menu Structure
 
 **3 Pages**:
 1. **TextField** - Journal TextField appearance
 2. **Text Input** - Dialog customization
-3. **Hotkey & HUD** - Hotkey and HUD positions/delay
+3. **Hotkey** - Hotkey configuration
 
 ## Design
 
@@ -51,8 +54,8 @@ event OnPageReset(string page)
         BuildTextFieldPage()
     elseif page == "Text Input"
         BuildTextInputPage()
-    elseif page == "Hotkey & HUD"
-        BuildHotkeyHUDPage()
+    elseif page == "Hotkey"
+        BuildHotkeyPage()
     endif
 endEvent
 ```
@@ -73,13 +76,8 @@ endEvent
 - Menu: Alignment (Left/Center/Right)
 - Button: Reset to Defaults
 
-**Hotkey & HUD Page**:
+**Hotkey Page**:
 - Keymap: Note Hotkey
-- Slider: Tutorial X (-500 to 500)
-- Slider: Tutorial Y (-500 to 500)
-- Slider: Indicator X (-500 to 500)
-- Slider: Indicator Y (-500 to 500)
-- Slider: Indicator Delay (0-5000 ms)
 - Button: Reset to Defaults
 
 ### 3. INI Sync
@@ -117,13 +115,11 @@ endEvent
 
 **Files Modified**: `PersonalNotesMCM.psc`
 
-### Task 7.4: Build Hotkey & HUD Page
+### Task 7.4: Build Hotkey Page
 **Steps**:
 1. Add keymap for hotkey scan code
-2. Add sliders for HUD positions (tutorial and indicator X/Y)
-3. Add slider for indicator delay
-4. Add reset button
-5. Wire up to INI settings
+2. Add reset button
+3. Wire up to INI settings
 
 **Files Modified**: `PersonalNotesMCM.psc`
 

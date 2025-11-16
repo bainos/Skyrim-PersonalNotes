@@ -8,10 +8,10 @@ Replace hardcoded values with INI settings. No new features, no logic changes - 
 ### Scope: ONLY Existing Hardcoded Values
 
 **TextField (JournalNoteHelper::OnJournalOpen):**
-- Position X: Currently `5.0`
-- Position Y: Currently `5.0`
-- Font Size: Currently `20`
-- Text Color: Currently `0xFFFFFF`
+- Position X: Currently `5.0` (line 325)
+- Position Y: Currently `5.0` (line 326)
+- Font Size: Currently `20` (line 339)
+- Text Color: Currently `0xFFFFFF` (line 340)
 
 **TextInput Dialog (PersonalNotes.psc):**
 - Width: Currently `500`
@@ -20,16 +20,7 @@ Replace hardcoded values with INI settings. No new features, no logic changes - 
 - Alignment: Currently `0` (left)
 
 **Hotkey (InputHandler::ProcessEvent):**
-- Scan Code: Currently `51` (comma key)
-
-**HUD Positions (QuestNoteHUDMenu::InitializeTextFields):**
-- Tutorial X: Currently `0.0`
-- Tutorial Y: Currently `0.0`
-- Indicator X: Currently `0.0`
-- Indicator Y: Currently `30.0`
-
-**HUD Delay (QuestNoteHUDMenu::UpdateQuestTracking):**
-- Indicator Delay: Currently `500` milliseconds
+- Scan Code: Currently `51` (comma key) (line 489)
 
 ## Design
 
@@ -50,13 +41,6 @@ iAlignment=0
 
 [Hotkey]
 iScanCode=51
-
-[HUD]
-fTutorialX=0.0
-fTutorialY=0.0
-fIndicatorX=0.0
-fIndicatorY=30.0
-iIndicatorDelayMS=500
 ```
 
 ### 2. SettingsManager Class
@@ -82,13 +66,6 @@ public:
     // Hotkey
     int noteHotkeyScanCode = 51;
 
-    // HUD
-    float hudTutorialX = 0.0f;
-    float hudTutorialY = 0.0f;
-    float hudIndicatorX = 0.0f;
-    float hudIndicatorY = 30.0f;
-    int hudIndicatorDelayMS = 500;
-
 private:
     SettingsManager() = default;
 };
@@ -102,21 +79,18 @@ private:
 3. Replace hardcoded values:
    - JournalNoteHelper::OnJournalOpen() - TextField position, font, color
    - InputHandler::ProcessEvent() - Hotkey scan code
-   - QuestNoteHUDMenu::InitializeTextFields() - HUD positions
-   - QuestNoteHUDMenu::UpdateQuestTracking() - Delay
 4. Pass TextInput settings to Papyrus functions
 
 **PersonalNotes.psc:**
-- Add parameters to ShowQuestNoteInput() for width, height, fontSize, alignment
-- Add parameters to ShowGeneralNoteInput() for width, height, fontSize, alignment
-- Receive settings from C++ when called
+- Modify ShowQuestNoteInput() to receive width, height, fontSize, alignment from C++
+- Modify ShowGeneralNoteInput() to receive width, height, fontSize, alignment from C++
 
 ## Tasks
 
 ### Task 6.1: Implement SettingsManager
 **Steps**:
-1. Add SettingsManager singleton class
-2. Add member variables with default values
+1. Add SettingsManager singleton class to plugin.cpp
+2. Add member variables with default values matching current hardcoded values
 3. Implement LoadSettings() using SKSE INI functions
 4. Call LoadSettings() in InitializePlugin()
 5. Create default INI file if missing
@@ -125,47 +99,98 @@ private:
 
 ### Task 6.2: Replace TextField Hardcoded Values
 **Steps**:
-1. Replace `5.0` → `SettingsManager::textFieldX`
-2. Replace `5.0` → `SettingsManager::textFieldY`
-3. Replace `20` → `SettingsManager::textFieldFontSize`
-4. Replace `0xFFFFFF` → `SettingsManager::textFieldColor`
+1. In JournalNoteHelper::OnJournalOpen():
+   - Replace `5` (X position) → `SettingsManager::textFieldX`
+   - Replace `5` (Y position) → `SettingsManager::textFieldY`
+   - Replace `20` (font size) → `SettingsManager::textFieldFontSize`
+   - Replace `0xFFFFFF` (color) → `SettingsManager::textFieldColor`
 
 **Files Modified**: `plugin.cpp` (JournalNoteHelper::OnJournalOpen)
 
 ### Task 6.3: Replace Hotkey Hardcoded Value
 **Steps**:
-1. Replace `51` → `SettingsManager::noteHotkeyScanCode`
+1. In InputHandler::ProcessEvent():
+   - Replace `51` → `SettingsManager::noteHotkeyScanCode`
 
 **Files Modified**: `plugin.cpp` (InputHandler::ProcessEvent)
 
-### Task 6.4: Replace HUD Hardcoded Values
+### Task 6.4: Replace TextInput Hardcoded Values
 **Steps**:
-1. Replace tutorial position `0.0, 0.0` → `SettingsManager::hudTutorialX/Y`
-2. Replace indicator position `0.0, 30.0` → `SettingsManager::hudIndicatorX/Y`
-3. Replace delay `500` → `SettingsManager::hudIndicatorDelayMS`
-
-**Files Modified**: `plugin.cpp` (QuestNoteHUDMenu)
-
-### Task 6.5: Replace TextInput Hardcoded Values
-**Steps**:
-1. Update C++ Papyrus bridge to pass settings to Papyrus
-2. Update PersonalNotes.psc to accept width, height, fontSize, alignment parameters
-3. Replace hardcoded values with parameters from C++
+1. Update PapyrusBridge::ShowQuestNoteInput() to pass TextInput settings to Papyrus
+2. Update PapyrusBridge::ShowGeneralNoteInput() to pass TextInput settings to Papyrus
+3. Update PersonalNotes.psc to receive and use these parameters
+4. Update mod/Source/Scripts/PersonalNotes.psc (dist copy)
 
 **Files Modified**:
-- `plugin.cpp` (PapyrusBridge)
+- `plugin.cpp` (PapyrusBridge::ShowQuestNoteInput, ShowGeneralNoteInput)
 - `PersonalNotes.psc`
 - `mod/Source/Scripts/PersonalNotes.psc`
 
+## Implementation Details
+
+### SettingsManager LoadSettings() Implementation
+
+Use SKSE's INI reading functions:
+```cpp
+void SettingsManager::LoadSettings() {
+    constexpr auto path = L"Data/SKSE/Plugins/PersonalNotes.ini";
+
+    // TextField
+    textFieldX = GetPrivateProfileFloat("TextField", "fPositionX", 5.0f, path);
+    textFieldY = GetPrivateProfileFloat("TextField", "fPositionY", 5.0f, path);
+    textFieldFontSize = GetPrivateProfileInt("TextField", "iFontSize", 20, path);
+    textFieldColor = GetPrivateProfileInt("TextField", "iTextColor", 0xFFFFFF, path);
+
+    // TextInput
+    textInputWidth = GetPrivateProfileInt("TextInput", "iWidth", 500, path);
+    textInputHeight = GetPrivateProfileInt("TextInput", "iHeight", 400, path);
+    textInputFontSize = GetPrivateProfileInt("TextInput", "iFontSize", 14, path);
+    textInputAlignment = GetPrivateProfileInt("TextInput", "iAlignment", 0, path);
+
+    // Hotkey
+    noteHotkeyScanCode = GetPrivateProfileInt("Hotkey", "iScanCode", 51, path);
+
+    spdlog::info("[SETTINGS] Loaded from INI");
+}
+```
+
+### Papyrus Bridge Changes
+
+**ShowQuestNoteInput** - pass TextInput settings:
+```cpp
+auto settings = SettingsManager::GetSingleton();
+auto args = RE::MakeFunctionArguments(
+    static_cast<std::int32_t>(questID),
+    RE::BSFixedString(questName),
+    RE::BSFixedString(existingText),
+    settings->textInputWidth,
+    settings->textInputHeight,
+    settings->textInputFontSize,
+    settings->textInputAlignment
+);
+```
+
+**PersonalNotes.psc** - receive settings:
+```papyrus
+Function ShowQuestNoteInput(int questID, string questName, string existingText, int width, int height, int fontSize, int alignment) Global
+    String prompt = "Note for: " + questName
+    String result = ExtendedVanillaMenus.TextInput(prompt, existingText, Width = width, Height = height, FontSize = fontSize, align = alignment)
+    ; ... rest of function
+EndFunction
+```
+
 ## Testing Plan
 
-1. Run with no INI → Creates INI with defaults, behavior unchanged
-2. Modify each INI value → Verify change takes effect
-3. Test invalid values → Falls back to defaults
-4. Test all features still work identically
+1. **No INI Test**: Delete INI, run game → INI created with defaults, behavior unchanged
+2. **TextField Test**: Modify TextField settings → Verify position, size, color changes
+3. **TextInput Test**: Modify TextInput settings → Verify dialog size, font changes
+4. **Hotkey Test**: Change scan code → Verify new key works
+5. **Invalid Values Test**: Set negative/extreme values → Falls back to defaults
+6. **All Features Test**: Verify quest notes, general notes, mouse hover all work
 
 ## Success Criteria
 - All hardcoded values replaced with INI settings
-- Default behavior identical to before
-- INI file auto-created with current defaults
+- Default behavior identical to before (users won't notice without changing INI)
+- INI file auto-created with current defaults if missing
 - No logic changes, no new features
+- No crashes with invalid INI values

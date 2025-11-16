@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<movie width="1280" height="720" framerate="24">
+  <background color="#000000"/>
+  <frame>
+    <library>
+      <!-- Empty clip - C++ will create TextField inside it -->
+      <clip id="ToastClip" class="ToastClip" export="ToastClip">
+        <frame/>
+      </clip>
+    </library>
+
+    <!-- Export the symbol for ActionScript -->
+    <export id="ToastClip" name="ToastClip"/>
+  </frame>
+</movie>

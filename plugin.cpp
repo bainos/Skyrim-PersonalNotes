@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 
+#include <windows.h>
 #include <string>
 #include <unordered_map>
 #include <shared_mutex>
@@ -77,6 +78,67 @@ struct Note {
 
         return true;
     }
+};
+
+//=============================================================================
+// Settings Manager
+//=============================================================================
+
+class SettingsManager {
+public:
+    static SettingsManager* GetSingleton() {
+        static SettingsManager instance;
+        return &instance;
+    }
+
+    void LoadSettings() {
+        constexpr auto path = L"Data/SKSE/Plugins/PersonalNotes.ini";
+
+        // Helper to read float from INI (no GetPrivateProfileFloat in Windows API)
+        auto ReadFloat = [](const wchar_t* section, const wchar_t* key, float defaultValue, const wchar_t* iniPath) -> float {
+            wchar_t buffer[32];
+            GetPrivateProfileStringW(section, key, L"", buffer, 32, iniPath);
+            if (buffer[0] == L'\0') {
+                return defaultValue;
+            }
+            return std::wcstof(buffer, nullptr);
+        };
+
+        // TextField
+        textFieldX = ReadFloat(L"TextField", L"fPositionX", 5.0f, path);
+        textFieldY = ReadFloat(L"TextField", L"fPositionY", 5.0f, path);
+        textFieldFontSize = GetPrivateProfileIntW(L"TextField", L"iFontSize", 20, path);
+        textFieldColor = GetPrivateProfileIntW(L"TextField", L"iTextColor", 0xFFFFFF, path);
+
+        // TextInput
+        textInputWidth = GetPrivateProfileIntW(L"TextInput", L"iWidth", 500, path);
+        textInputHeight = GetPrivateProfileIntW(L"TextInput", L"iHeight", 400, path);
+        textInputFontSize = GetPrivateProfileIntW(L"TextInput", L"iFontSize", 14, path);
+        textInputAlignment = GetPrivateProfileIntW(L"TextInput", L"iAlignment", 0, path);
+
+        // Hotkey
+        noteHotkeyScanCode = GetPrivateProfileIntW(L"Hotkey", L"iScanCode", 51, path);
+
+        spdlog::info("[SETTINGS] Loaded from INI");
+    }
+
+    // TextField
+    float textFieldX = 5.0f;
+    float textFieldY = 5.0f;
+    int textFieldFontSize = 20;
+    int textFieldColor = 0xFFFFFF;
+
+    // TextInput
+    int textInputWidth = 500;
+    int textInputHeight = 400;
+    int textInputFontSize = 14;
+    int textInputAlignment = 0;
+
+    // Hotkey
+    int noteHotkeyScanCode = 51;
+
+private:
+    SettingsManager() = default;
 };
 
 //=============================================================================
@@ -319,10 +381,11 @@ void JournalNoteHelper::OnJournalOpen() {
         if (journalMenu->uiMovie->GetVariable(&root, "_root")) {
             RE::GFxValue textField;
             RE::GFxValue createArgs[6];
+            auto settings = SettingsManager::GetSingleton();
             createArgs[0].SetString("questNoteTextField");  // name
             createArgs[1].SetNumber(999999);                // VERY high depth to be on absolute top
-            createArgs[2].SetNumber(5);                     // TOP-LEFT x position
-            createArgs[3].SetNumber(5);                     // TOP-LEFT y position
+            createArgs[2].SetNumber(settings->textFieldX);  // TOP-LEFT x position
+            createArgs[3].SetNumber(settings->textFieldY);  // TOP-LEFT y position
             createArgs[4].SetNumber(600);                   // width
             createArgs[5].SetNumber(50);                    // height
 
@@ -335,8 +398,8 @@ void JournalNoteHelper::OnJournalOpen() {
 
                 if (textFormat.IsObject()) {
                     textFormat.SetMember("font", "$EverywhereBoldFont");
-                    textFormat.SetMember("size", 20);
-                    textFormat.SetMember("color", 0xFFFFFF);  // White
+                    textFormat.SetMember("size", settings->textFieldFontSize);
+                    textFormat.SetMember("color", settings->textFieldColor);
 
                     // Apply defaultTextFormat
                     textField.SetMember("defaultTextFormat", textFormat);
@@ -485,8 +548,8 @@ public:
                     }
                 }
 
-                // Comma key (scan code 51) - context-dependent behavior
-                if (buttonEvent->IsDown() && keyCode == 51) {
+                // Note hotkey - context-dependent behavior
+                if (buttonEvent->IsDown() && keyCode == SettingsManager::GetSingleton()->noteHotkeyScanCode) {
                     if (inJournal) {
                         // In Journal Menu → Quest note
                         OnQuestNoteHotkey();
@@ -556,11 +619,18 @@ namespace PapyrusBridge {
         auto mgr = NoteManager::GetSingleton();
         std::string existingText = mgr->GetNoteForQuest(questID);
 
+        // Get TextInput settings
+        auto settings = SettingsManager::GetSingleton();
+
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
             static_cast<std::int32_t>(questID),
             RE::BSFixedString(questName),
-            RE::BSFixedString(existingText)
+            RE::BSFixedString(existingText),
+            static_cast<std::int32_t>(settings->textInputWidth),
+            static_cast<std::int32_t>(settings->textInputHeight),
+            static_cast<std::int32_t>(settings->textInputFontSize),
+            static_cast<std::int32_t>(settings->textInputAlignment)
         );
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
 
@@ -598,10 +668,17 @@ namespace PapyrusBridge {
         // Get existing general note text
         std::string existingText = NoteManager::GetSingleton()->GetGeneralNote();
 
+        // Get TextInput settings
+        auto settings = SettingsManager::GetSingleton();
+
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
             std::move(RE::BSFixedString("")),           // questName (empty for general)
-            std::move(RE::BSFixedString(existingText))
+            std::move(RE::BSFixedString(existingText)),
+            static_cast<std::int32_t>(settings->textInputWidth),
+            static_cast<std::int32_t>(settings->textInputHeight),
+            static_cast<std::int32_t>(settings->textInputFontSize),
+            static_cast<std::int32_t>(settings->textInputAlignment)
         );
 
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
@@ -662,6 +739,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* msg) {
 
 void InitializePlugin() {
     SetupLog();
+
+    // Load settings from INI
+    SettingsManager::GetSingleton()->LoadSettings();
 
     // Register serialization callbacks
     auto serialization = SKSE::GetSerializationInterface();
