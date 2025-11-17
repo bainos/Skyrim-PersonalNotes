@@ -28,6 +28,7 @@
 #include <sstream>
 #include <filesystem>
 #include <iomanip>
+#include <chrono>
 
 //=============================================================================
 // Version Information
@@ -1113,6 +1114,84 @@ void JournalNoteHelper::UpdateTextField(RE::FormID questID, bool forceUpdate) {
 }
 
 //=============================================================================
+// Input Event Dispatch Hook (runs BEFORE event sinks - same as wheeler)
+//=============================================================================
+
+class InputDispatchHook {
+public:
+    static void Install() {
+        auto& trampoline = SKSE::GetTrampoline();
+        REL::Relocation<uintptr_t> caller{ RELOCATION_ID(67315, 68617) };
+        _DispatchInputEvent = trampoline.write_call<5>(caller.address() + 0x7B, DispatchInputEvent);
+        spdlog::info("[HOOK] Input dispatch hook installed (runs BEFORE wheeler & event sinks)");
+    }
+
+private:
+    /**
+     * Our hook function that runs BEFORE input events are dispatched to sinks.
+     * This is the same technique wheeler uses - we can filter events here.
+     */
+    static void DispatchInputEvent(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent** a_events) {
+        if (a_events && *a_events) {
+            auto ui = RE::UI::GetSingleton();
+            bool isModalOpen = ui && ui->IsModalMenuOpen();
+
+            if (isModalOpen) {
+                auto ctrlMap = RE::ControlMap::GetSingleton();
+                if (ctrlMap) {
+                    // Filter events by modifying linked list
+                    RE::InputEvent* event = *a_events;
+                    RE::InputEvent* prev = nullptr;
+
+                    while (event != nullptr) {
+                        bool shouldDispatch = true;
+
+                        // Only filter button events bound to game controls
+                        if (event->eventType == RE::INPUT_EVENT_TYPE::kButton) {
+                            auto buttonEvent = event->AsButtonEvent();
+                            if (buttonEvent) {
+                                auto device = buttonEvent->device.get();
+                                uint32_t keyCode = buttonEvent->idCode;
+                                auto userEvent = ctrlMap->GetUserEventName(keyCode, device);
+
+                                // If key is bound to a game control, block it
+                                if (!userEvent.empty()) {
+                                    shouldDispatch = false;
+
+                                    // DEBUG: Log 'g' key filtering
+                                    if (keyCode == 34) {
+                                        spdlog::info("[HOOK:G] Blocking '{}' control (keyCode={}) - wheeler won't see this", userEvent, keyCode);
+                                    }
+                                }
+                                // Otherwise (typing, ESC, Enter, etc.) - allow through
+                            }
+                        }
+
+                        // Remove event from chain if blocked
+                        RE::InputEvent* nextEvent = event->next;
+                        if (!shouldDispatch) {
+                            if (prev != nullptr) {
+                                prev->next = nextEvent;
+                            } else {
+                                *a_events = nextEvent;
+                            }
+                        } else {
+                            prev = event;
+                        }
+                        event = nextEvent;
+                    }
+                }
+            }
+        }
+
+        // Call original function (dispatches to event sinks)
+        _DispatchInputEvent(a_dispatcher, a_events);
+    }
+
+    static inline REL::Relocation<decltype(DispatchInputEvent)> _DispatchInputEvent;
+};
+
+//=============================================================================
 // Input Handler
 //=============================================================================
 
@@ -1170,6 +1249,18 @@ public:
                 bool inJournal = IsJournalCurrentlyOpen();
                 uint32_t keyCode = buttonEvent->idCode;
 
+                // Block hotkeys if modal dialogs open (TextInput, Console, etc.)
+                bool shouldBlockHotkeys = ShouldBlockHotkeys();
+
+                // If blocking, stop event propagation
+                if (shouldBlockHotkeys) {
+                    return RE::BSEventNotifyControl::kStop;
+                }
+
+                if (shouldBlockHotkeys && !inJournal) {
+                    continue;  // Skip our hotkey processing only
+                }
+
                 if (inJournal) {
                     // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
                     // Use IsUp() so Journal processes the input first, then we read the updated selection
@@ -1190,6 +1281,7 @@ public:
                         OnQuestNoteHotkey();
                     } else {
                         // During gameplay → General note
+                        MarkDialogShown();
                         PapyrusBridge::ShowGeneralNoteInput();
                     }
                 }
@@ -1198,6 +1290,7 @@ public:
                 if (buttonEvent->IsDown() && keyCode == SettingsManager::GetSingleton()->quickAccessScanCode) {
                     if (!inJournal) {
                         // Show list of all notes
+                        MarkDialogShown();
                         PapyrusBridge::ShowNotesListMenu();
                     }
                 }
@@ -1220,6 +1313,7 @@ private:
     InputHandler() = default;
 
     bool wasJournalOpen_ = false;  // Track journal state across events
+    std::chrono::steady_clock::time_point lastDialogShown_ = std::chrono::steady_clock::now() - std::chrono::seconds(10);  // Initialize to past time
 
     /**
      * Helper to check if journal menu is currently open.
@@ -1228,6 +1322,40 @@ private:
     [[nodiscard]] bool IsJournalCurrentlyOpen() const {
         auto ui = RE::UI::GetSingleton();
         return ui && ui->IsMenuOpen("Journal Menu");
+    }
+
+    /**
+     * Check if hotkeys should be blocked (modal dialogs open, console, etc.)
+     * @return true if hotkeys should be blocked
+     */
+    [[nodiscard]] bool ShouldBlockHotkeys() const {
+        auto ui = RE::UI::GetSingleton();
+        if (!ui) {
+            return true;
+        }
+
+        // Always block in console
+        if (ui->IsMenuOpen(RE::Console::MENU_NAME)) {
+            return true;
+        }
+
+        // PROPER detection: Check if modal dialog is open (ExtendedVanillaMenus TextInput)
+        if (ui->IsModalMenuOpen()) {
+            bool journalOpen = IsJournalCurrentlyOpen();
+            // If modal AND not JUST Journal (Journal isn't modal), it's TextInput or similar
+            if (!journalOpen || ui->menuStack.size() > 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Mark that a dialog was just shown (blocks hotkeys temporarily)
+     */
+    void MarkDialogShown() {
+        lastDialogShown_ = std::chrono::steady_clock::now();
     }
 
     void OnQuestNoteHotkey() {
@@ -1242,6 +1370,9 @@ private:
             RE::DebugNotification("No quest selected");
             return;
         }
+
+        // Mark dialog shown to block hotkeys temporarily
+        MarkDialogShown();
 
         // Show note input dialog
         PapyrusBridge::ShowQuestNoteInput(questID);
@@ -1515,6 +1646,7 @@ void SetupLog() {
 void MessageHandler(SKSE::MessagingInterface::Message* msg) {
     switch (msg->type) {
     case SKSE::MessagingInterface::kDataLoaded:
+
         // Register Papyrus functions
         if (auto vm = RE::BSScript::Internal::VirtualMachine::GetSingleton()) {
             PapyrusBridge::Register(vm);
