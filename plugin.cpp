@@ -38,6 +38,18 @@
 #define PERSONAL_NOTES_VERSION_PATCH 0
 
 //=============================================================================
+// Path Constants
+//=============================================================================
+
+namespace Paths {
+    constexpr const char* BASE_DIR = "Data/SKSE/Plugins/PersonalNotes";
+    constexpr const char* LOG_FILE = "Data/SKSE/Plugins/PersonalNotes/PersonalNotes.log";
+    constexpr const char* BACKUP_DIR = "Data/SKSE/Plugins/PersonalNotes/backup";
+    constexpr const char* IMPORT_DIR = "Data/SKSE/Plugins/PersonalNotes/import";
+    constexpr const char* IMPORT_FILE = "Data/SKSE/Plugins/PersonalNotes/import/notes.json";
+}
+
+//=============================================================================
 // Constants
 //=============================================================================
 
@@ -484,8 +496,10 @@ public:
     }
 
     void Revert(SKSE::SerializationInterface*) {
-        // Notes persist across playthroughs - do not clear
-        spdlog::info("[REVERT] Notes persist across playthroughs");
+        // Clear RAM when starting new game (prevents note leakage between different characters)
+        std::unique_lock lock(lock_);
+        notesByQuest_.clear();
+        spdlog::info("[REVERT] Cleared notes from RAM (new game started)");
     }
 
 private:
@@ -508,12 +522,6 @@ private:
  */
 namespace BackupManager {
     namespace fs = std::filesystem;
-
-    // Base path for all backup/import operations
-    constexpr const char* BASE_PATH = "Data/SKSE/Plugins/PersonalNotes";
-    constexpr const char* BACKUP_DIR = "Data/SKSE/Plugins/PersonalNotes/backup";
-    constexpr const char* IMPORT_DIR = "Data/SKSE/Plugins/PersonalNotes/import";
-    constexpr const char* IMPORT_FILE = "Data/SKSE/Plugins/PersonalNotes/import/notes.json";
 
     /**
      * @brief Get current timestamp in ISO 8601 format for filenames.
@@ -626,7 +634,7 @@ namespace BackupManager {
         }
 
         // Ensure backup directory exists
-        if (!EnsureDirectoryExists(BACKUP_DIR)) {
+        if (!EnsureDirectoryExists(Paths::BACKUP_DIR)) {
             RE::DebugNotification("Failed to create backup directory");
             return false;
         }
@@ -652,7 +660,7 @@ namespace BackupManager {
 
         // Generate filename with player name and timestamp
         std::string timestamp = GetTimestampForFilename();
-        std::string filename = std::string(BACKUP_DIR) + "/" + safePlayerName + "_notes_" + timestamp + ".json";
+        std::string filename = std::string(Paths::BACKUP_DIR) + "/" + safePlayerName + "_notes_" + timestamp + ".json";
 
         // Build JSON manually
         std::ostringstream json;
@@ -763,15 +771,15 @@ namespace BackupManager {
      */
     int ImportNotesFromJSON() {
         // Check if import file exists
-        if (!fs::exists(IMPORT_FILE)) {
-            spdlog::info("[BACKUP] No import file found at {}", IMPORT_FILE);
+        if (!fs::exists(Paths::IMPORT_FILE)) {
+            spdlog::info("[BACKUP] No import file found at {}", Paths::IMPORT_FILE);
             return 0;  // Not an error, just nothing to import
         }
 
         // Read file
-        std::ifstream file(IMPORT_FILE);
+        std::ifstream file(Paths::IMPORT_FILE);
         if (!file) {
-            spdlog::error("[BACKUP] Failed to open import file: {}", IMPORT_FILE);
+            spdlog::error("[BACKUP] Failed to open import file: {}", Paths::IMPORT_FILE);
             return -1;
         }
 
@@ -851,11 +859,11 @@ namespace BackupManager {
             }
 
             if (importCount > 0) {
-                spdlog::info("[BACKUP] Imported {} notes from {}", importCount, IMPORT_FILE);
+                spdlog::info("[BACKUP] Imported {} notes from {}", importCount, Paths::IMPORT_FILE);
 
                 // Delete import file after successful import
                 try {
-                    fs::remove(IMPORT_FILE);
+                    fs::remove(Paths::IMPORT_FILE);
                     spdlog::info("[BACKUP] Deleted import file after successful import");
                 } catch (const fs::filesystem_error& e) {
                     spdlog::warn("[BACKUP] Failed to delete import file: {}", e.what());
@@ -1477,7 +1485,19 @@ namespace PapyrusBridge {
 //=============================================================================
 
 void SetupLog() {
-    auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("PersonalNotes.log", true);
+    namespace fs = std::filesystem;
+
+    // Ensure log directory exists (self-contained, no external dependencies)
+    try {
+        fs::path logDir = fs::path(Paths::LOG_FILE).parent_path();
+        if (!fs::exists(logDir)) {
+            fs::create_directories(logDir);
+        }
+    } catch (const fs::filesystem_error& e) {
+        // Can't log yet, but continue - spdlog will try to create file
+    }
+
+    auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(Paths::LOG_FILE, true);
     auto logger = std::make_shared<spdlog::logger>("log", std::move(sink));
     spdlog::set_default_logger(std::move(logger));
     spdlog::set_level(spdlog::level::info);
