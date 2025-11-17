@@ -9,3 +9,6 @@ Function SaveQuestNote(int questID, string noteText) Global Native
 ; Called from PersonalNotes.psc to save general note
 ; If noteText is empty, the note is deleted
 Function SaveGeneralNote(string noteText) Global Native
+
+; Called from PersonalNotes.psc to export all notes to JSON
+Function ExportAllNotes() Global Native

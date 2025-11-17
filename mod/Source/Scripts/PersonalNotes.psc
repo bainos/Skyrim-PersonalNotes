@@ -44,10 +44,10 @@ EndFunction
 
 ; Called from C++ when quick access hotkey pressed (dot key by default)
 ; Parameters:
-;   questNames - Array of quest names (or "General Note")
+;   questNames - Array of quest names (or "General Note" or "--- Export All Notes ---")
 ;   notePreviews - Array of note text previews (for list display)
 ;   noteTexts - Array of full note texts
-;   questIDs - Array of quest FormIDs (-1 for general note)
+;   questIDs - Array of quest FormIDs (-1 for general note, -2 for export action)
 ;   width, height, fontSize, alignment - TextInput settings from INI
 Function ShowNotesListMenu(string[] questNames, string[] notePreviews, string[] noteTexts, int[] questIDs, int width, int height, int fontSize, int alignment) Global
     ; Show list menu
@@ -62,6 +62,13 @@ Function ShowNotesListMenu(string[] questNames, string[] notePreviews, string[] 
     Int questID = questIDs[selectedIndex]
     String questName = questNames[selectedIndex]
     String existingText = noteTexts[selectedIndex]
+
+    ; Check for special actions
+    If questID == -2
+        ; Export all notes action
+        PersonalNotesNative.ExportAllNotes()
+        Return
+    EndIf
 
     ; Show edit dialog using existing functions
     If questID == -1

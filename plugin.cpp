@@ -24,6 +24,10 @@
 #include <unordered_map>
 #include <shared_mutex>
 #include <ctime>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <iomanip>
 
 //=============================================================================
 // Version Information
@@ -480,9 +484,8 @@ public:
     }
 
     void Revert(SKSE::SerializationInterface*) {
-        std::unique_lock lock(lock_);
-        notesByQuest_.clear();
-        spdlog::info("[REVERT] Cleared all notes (new game)");
+        // Notes persist across playthroughs - do not clear
+        spdlog::info("[REVERT] Notes persist across playthroughs");
     }
 
 private:
@@ -491,6 +494,382 @@ private:
     std::unordered_map<RE::FormID, Note> notesByQuest_;
     mutable std::shared_mutex lock_;
 };
+
+//=============================================================================
+// Backup Manager
+//=============================================================================
+
+/**
+ * @namespace BackupManager
+ * @brief Handles JSON export/import of notes for backup and restore.
+ *
+ * Exports notes to timestamped JSON files in Data/SKSE/Plugins/PersonalNotes/backup/
+ * Imports notes from Data/SKSE/Plugins/PersonalNotes/import/notes.json on plugin load.
+ */
+namespace BackupManager {
+    namespace fs = std::filesystem;
+
+    // Base path for all backup/import operations
+    constexpr const char* BASE_PATH = "Data/SKSE/Plugins/PersonalNotes";
+    constexpr const char* BACKUP_DIR = "Data/SKSE/Plugins/PersonalNotes/backup";
+    constexpr const char* IMPORT_DIR = "Data/SKSE/Plugins/PersonalNotes/import";
+    constexpr const char* IMPORT_FILE = "Data/SKSE/Plugins/PersonalNotes/import/notes.json";
+
+    /**
+     * @brief Get current timestamp in ISO 8601 format for filenames.
+     * @return Timestamp string like "2025-11-16_22-30-45"
+     */
+    std::string GetTimestampForFilename() {
+        auto now = std::time(nullptr);
+        auto tm = *std::localtime(&now);
+        std::ostringstream oss;
+        oss << std::put_time(&tm, "%Y-%m-%d_%H-%M-%S");
+        return oss.str();
+    }
+
+    /**
+     * @brief Get current timestamp in ISO 8601 format for JSON content.
+     * @return Timestamp string like "2025-11-16T22:30:45"
+     */
+    std::string GetTimestampISO8601() {
+        auto now = std::time(nullptr);
+        auto tm = *std::localtime(&now);
+        std::ostringstream oss;
+        oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S");
+        return oss.str();
+    }
+
+    /**
+     * @brief Escape string for JSON format.
+     * @param input Raw string
+     * @return JSON-escaped string
+     */
+    std::string EscapeJSON(const std::string& input) {
+        std::ostringstream oss;
+        for (char c : input) {
+            switch (c) {
+            case '"':  oss << "\\\""; break;
+            case '\\': oss << "\\\\"; break;
+            case '\b': oss << "\\b"; break;
+            case '\f': oss << "\\f"; break;
+            case '\n': oss << "\\n"; break;
+            case '\r': oss << "\\r"; break;
+            case '\t': oss << "\\t"; break;
+            default:
+                if (c < 32) {
+                    oss << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
+                } else {
+                    oss << c;
+                }
+            }
+        }
+        return oss.str();
+    }
+
+    /**
+     * @brief Unescape JSON string.
+     * @param input JSON-escaped string
+     * @return Unescaped string
+     */
+    std::string UnescapeJSON(const std::string& input) {
+        std::string result;
+        result.reserve(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            if (input[i] == '\\' && i + 1 < input.size()) {
+                switch (input[i + 1]) {
+                case '"':  result += '"'; i++; break;
+                case '\\': result += '\\'; i++; break;
+                case 'b':  result += '\b'; i++; break;
+                case 'f':  result += '\f'; i++; break;
+                case 'n':  result += '\n'; i++; break;
+                case 'r':  result += '\r'; i++; break;
+                case 't':  result += '\t'; i++; break;
+                default: result += input[i]; break;
+                }
+            } else {
+                result += input[i];
+            }
+        }
+        return result;
+    }
+
+    /**
+     * @brief Create directory if it doesn't exist.
+     * @param path Directory path to create
+     * @return true on success or if already exists
+     */
+    bool EnsureDirectoryExists(const std::string& path) {
+        try {
+            if (!fs::exists(path)) {
+                fs::create_directories(path);
+                spdlog::info("[BACKUP] Created directory: {}", path);
+            }
+            return true;
+        } catch (const fs::filesystem_error& e) {
+            spdlog::error("[BACKUP] Failed to create directory {}: {}", path, e.what());
+            return false;
+        }
+    }
+
+    /**
+     * @brief Export all notes to JSON file with timestamp.
+     * @return true on success, false on failure
+     */
+    bool ExportNotesToJSON() {
+        auto mgr = NoteManager::GetSingleton();
+        auto notes = mgr->GetAllNotes();
+
+        if (notes.empty()) {
+            RE::DebugNotification("No notes to export");
+            spdlog::warn("[BACKUP] No notes to export");
+            return false;
+        }
+
+        // Ensure backup directory exists
+        if (!EnsureDirectoryExists(BACKUP_DIR)) {
+            RE::DebugNotification("Failed to create backup directory");
+            return false;
+        }
+
+        // Get player name
+        std::string playerName = "Unknown";
+        auto player = RE::PlayerCharacter::GetSingleton();
+        if (player) {
+            const char* name = player->GetName();
+            if (name && name[0] != '\0') {
+                playerName = name;
+            }
+        }
+
+        // Sanitize player name for filename (remove invalid chars)
+        std::string safePlayerName = playerName;
+        for (char& c : safePlayerName) {
+            if (c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' ||
+                c == '"' || c == '<' || c == '>' || c == '|' || c == ' ') {
+                c = '_';
+            }
+        }
+
+        // Generate filename with player name and timestamp
+        std::string timestamp = GetTimestampForFilename();
+        std::string filename = std::string(BACKUP_DIR) + "/" + safePlayerName + "_notes_" + timestamp + ".json";
+
+        // Build JSON manually
+        std::ostringstream json;
+        json << "{\n";
+        json << "  \"exportDate\": \"" << GetTimestampISO8601() << "\",\n";
+        json << "  \"version\": \"1.0\",\n";
+        json << "  \"playerName\": \"" << EscapeJSON(playerName) << "\",\n";
+        json << "  \"noteCount\": " << notes.size() << ",\n";
+        json << "  \"notes\": [\n";
+
+        bool first = true;
+        for (const auto& [questID, note] : notes) {
+            if (!first) json << ",\n";
+            first = false;
+
+            // Get quest name
+            std::string questName;
+            if (questID == NoteManager::GENERAL_NOTE_ID) {
+                questName = "General Note";
+            } else {
+                auto quest = RE::TESForm::LookupByID<RE::TESQuest>(questID);
+                questName = quest ? quest->GetName() : "Unknown Quest";
+            }
+
+            json << "    {\n";
+            json << "      \"questID\": " << questID << ",\n";
+            json << "      \"questName\": \"" << EscapeJSON(questName) << "\",\n";
+            json << "      \"text\": \"" << EscapeJSON(note.text) << "\",\n";
+            json << "      \"timestamp\": " << note.timestamp << "\n";
+            json << "    }";
+        }
+
+        json << "\n  ]\n";
+        json << "}\n";
+
+        // Write to file
+        try {
+            std::ofstream file(filename);
+            if (!file) {
+                spdlog::error("[BACKUP] Failed to open file for writing: {}", filename);
+                RE::DebugNotification("Export failed");
+                return false;
+            }
+
+            file << json.str();
+            file.close();
+
+            spdlog::info("[BACKUP] Exported {} notes to {}", notes.size(), filename);
+            RE::DebugNotification("Notes exported successfully");
+            return true;
+
+        } catch (const std::exception& e) {
+            spdlog::error("[BACKUP] Export failed: {}", e.what());
+            RE::DebugNotification("Export failed");
+            return false;
+        }
+    }
+
+    /**
+     * @brief Simple JSON value extractor (finds "key": value pattern).
+     * @param json JSON string
+     * @param key Key to search for
+     * @return Value string (without quotes for strings)
+     */
+    std::string ExtractJSONValue(const std::string& json, const std::string& key) {
+        std::string pattern = "\"" + key + "\":";
+        size_t pos = json.find(pattern);
+        if (pos == std::string::npos) {
+            return "";
+        }
+
+        pos += pattern.size();
+        // Skip whitespace
+        while (pos < json.size() && std::isspace(json[pos])) {
+            ++pos;
+        }
+
+        if (pos >= json.size()) {
+            return "";
+        }
+
+        // String value (quoted)
+        if (json[pos] == '"') {
+            ++pos;
+            size_t end = pos;
+            while (end < json.size() && json[end] != '"') {
+                if (json[end] == '\\') {
+                    ++end;  // Skip escaped character
+                }
+                ++end;
+            }
+            return json.substr(pos, end - pos);
+        }
+
+        // Number value (unquoted)
+        size_t end = pos;
+        while (end < json.size() && (std::isdigit(json[end]) || json[end] == '-' || json[end] == '.')) {
+            ++end;
+        }
+        return json.substr(pos, end - pos);
+    }
+
+    /**
+     * @brief Import notes from fixed import path if exists.
+     * Merges imported notes with existing notes (imported notes overwrite if conflict).
+     * Deletes import file after successful import.
+     * @return Number of notes imported, -1 on error
+     */
+    int ImportNotesFromJSON() {
+        // Check if import file exists
+        if (!fs::exists(IMPORT_FILE)) {
+            spdlog::info("[BACKUP] No import file found at {}", IMPORT_FILE);
+            return 0;  // Not an error, just nothing to import
+        }
+
+        // Read file
+        std::ifstream file(IMPORT_FILE);
+        if (!file) {
+            spdlog::error("[BACKUP] Failed to open import file: {}", IMPORT_FILE);
+            return -1;
+        }
+
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        std::string json = buffer.str();
+        file.close();
+
+        // Check if file is empty
+        if (json.empty() || json.find_first_not_of(" \t\n\r") == std::string::npos) {
+            spdlog::info("[BACKUP] Import file is empty, skipping");
+            return 0;
+        }
+
+        // Parse JSON manually (simple approach for our specific format)
+        try {
+            auto mgr = NoteManager::GetSingleton();
+            int importCount = 0;
+
+            // Find notes array
+            size_t notesArrayStart = json.find("\"notes\":");
+            if (notesArrayStart == std::string::npos) {
+                spdlog::error("[BACKUP] Invalid JSON: 'notes' array not found");
+                return -1;
+            }
+
+            // Find opening bracket of array
+            size_t arrayStart = json.find('[', notesArrayStart);
+            if (arrayStart == std::string::npos) {
+                spdlog::error("[BACKUP] Invalid JSON: notes array bracket not found");
+                return -1;
+            }
+
+            // Parse each note object
+            size_t pos = arrayStart + 1;
+            while (pos < json.size()) {
+                // Find next note object
+                size_t objStart = json.find('{', pos);
+                if (objStart == std::string::npos) {
+                    break;  // No more objects
+                }
+
+                size_t objEnd = json.find('}', objStart);
+                if (objEnd == std::string::npos) {
+                    spdlog::error("[BACKUP] Invalid JSON: unclosed object");
+                    break;
+                }
+
+                std::string noteObj = json.substr(objStart, objEnd - objStart + 1);
+
+                // Extract fields
+                std::string questIDStr = ExtractJSONValue(noteObj, "questID");
+                std::string textEscaped = ExtractJSONValue(noteObj, "text");
+                std::string timestampStr = ExtractJSONValue(noteObj, "timestamp");
+
+                if (questIDStr.empty() || textEscaped.empty()) {
+                    spdlog::warn("[BACKUP] Skipping note with missing fields");
+                    pos = objEnd + 1;
+                    continue;
+                }
+
+                // Convert values
+                RE::FormID questID = static_cast<RE::FormID>(std::stoul(questIDStr));
+                std::string text = UnescapeJSON(textEscaped);
+                std::time_t timestamp = timestampStr.empty() ? std::time(nullptr) : std::stoll(timestampStr);
+
+                // Create and save note
+                Note note;
+                note.questID = questID;
+                note.text = text;
+                note.timestamp = timestamp;
+
+                mgr->SaveNoteForQuest(questID, text);
+                importCount++;
+
+                pos = objEnd + 1;
+            }
+
+            if (importCount > 0) {
+                spdlog::info("[BACKUP] Imported {} notes from {}", importCount, IMPORT_FILE);
+
+                // Delete import file after successful import
+                try {
+                    fs::remove(IMPORT_FILE);
+                    spdlog::info("[BACKUP] Deleted import file after successful import");
+                } catch (const fs::filesystem_error& e) {
+                    spdlog::warn("[BACKUP] Failed to delete import file: {}", e.what());
+                }
+            }
+
+            return importCount;
+
+        } catch (const std::exception& e) {
+            spdlog::error("[BACKUP] Import parsing failed: {}", e.what());
+            return -1;
+        }
+    }
+}
 
 //=============================================================================
 // Forward Declarations
@@ -1020,6 +1399,12 @@ namespace PapyrusBridge {
         std::vector<RE::BSFixedString> noteTexts;
         std::vector<std::int32_t> questIDs;
 
+        // Add "Export All Notes" option at index 0 (special ID: -2)
+        questNames.push_back(RE::BSFixedString("--- Export All Notes ---"));
+        notePreviews.push_back(RE::BSFixedString("Save all notes to JSON file"));
+        noteTexts.push_back(RE::BSFixedString(""));  // No text for export option
+        questIDs.push_back(-2);  // Special ID for export action
+
         for (const auto& [questID, note] : notes) {
             // Quest name
             if (questID == NoteManager::GENERAL_NOTE_ID) {
@@ -1063,16 +1448,25 @@ namespace PapyrusBridge {
     }
 
     /**
+     * @brief Export all notes to JSON (called from Papyrus).
+     * Native function registered for Papyrus. Calls BackupManager::ExportNotesToJSON().
+     */
+    void ExportAllNotes(RE::StaticFunctionTag*) {
+        BackupManager::ExportNotesToJSON();
+    }
+
+    /**
      * @brief Register native Papyrus functions.
      * @param vm Papyrus virtual machine
      * @return true on success
      *
-     * Registers SaveQuestNote and SaveGeneralNote as native functions
+     * Registers SaveQuestNote, SaveGeneralNote, and ExportAllNotes as native functions
      * callable from Papyrus scripts.
      */
     bool Register(RE::BSScript::IVirtualMachine* vm) {
         vm->RegisterFunction("SaveQuestNote", "PersonalNotesNative", SaveQuestNote);
         vm->RegisterFunction("SaveGeneralNote", "PersonalNotesNative", SaveGeneralNote);
+        vm->RegisterFunction("ExportAllNotes", "PersonalNotesNative", ExportAllNotes);
         spdlog::info("[PAPYRUS] Native functions registered");
         return true;
     }
@@ -1137,6 +1531,12 @@ void InitializePlugin() {
 
         serialization->SetLoadCallback([](SKSE::SerializationInterface* intfc) {
             NoteManager::GetSingleton()->Load(intfc);
+
+            // Import notes after loading co-save (merge import with loaded data)
+            int importedCount = BackupManager::ImportNotesFromJSON();
+            if (importedCount > 0) {
+                spdlog::info("[LOAD] Merged {} imported notes with save data", importedCount);
+            }
         });
 
         serialization->SetRevertCallback([](SKSE::SerializationInterface* intfc) {
