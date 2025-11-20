@@ -44,7 +44,7 @@
 
 namespace Paths {
     constexpr const char* BASE_DIR = "Data/SKSE/Plugins/PersonalNotes";
-    constexpr const char* LOG_FILE = "Data/SKSE/Plugins/PersonalNotes/PersonalNotes.log";
+    constexpr const char* LOG_FILE = "Data/SKSE/Plugins/PersonalNotes.log";  // Standard: same folder as DLL
     constexpr const char* BACKUP_DIR = "Data/SKSE/Plugins/PersonalNotes/backup";
     constexpr const char* IMPORT_DIR = "Data/SKSE/Plugins/PersonalNotes/import";
     constexpr const char* IMPORT_FILE = "Data/SKSE/Plugins/PersonalNotes/import/notes.json";
@@ -214,8 +214,39 @@ public:
     void LoadSettings() {
         constexpr auto path = L"Data/SKSE/Plugins/PersonalNotes.ini";
 
-        // Helper to read float from INI (no GetPrivateProfileFloat in Windows API)
-        auto ReadFloat = [](const wchar_t* section, const wchar_t* key, float defaultValue, const wchar_t* iniPath) -> float {
+        // Flush Windows INI cache to ensure we read the latest file (dMenu may have modified it)
+        WritePrivateProfileStringW(nullptr, nullptr, nullptr, path);
+
+        // Check for UTF-8 BOM and remove it if present (dMenu may write with BOM)
+        {
+            std::ifstream iniFile("Data/SKSE/Plugins/PersonalNotes.ini", std::ios::binary);
+            if (iniFile) {
+                unsigned char bytes[3];
+                iniFile.read(reinterpret_cast<char*>(bytes), 3);
+
+                // Check for UTF-8 BOM (EF BB BF)
+                if (iniFile.gcount() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+                    // Read rest of file
+                    std::string content((std::istreambuf_iterator<char>(iniFile)), std::istreambuf_iterator<char>());
+                    iniFile.close();
+
+                    // Write back without BOM
+                    std::ofstream outFile("Data/SKSE/Plugins/PersonalNotes.ini", std::ios::binary);
+                    if (outFile) {
+                        outFile.write(content.c_str(), content.size());
+                        outFile.close();
+                        spdlog::info("[SETTINGS] Removed UTF-8 BOM from INI file");
+
+                        // Flush cache after rewriting
+                        WritePrivateProfileStringW(nullptr, nullptr, nullptr, path);
+                    }
+                }
+            }
+        }
+
+        // Helper to read number from INI (handles both int and float formats from dMenu)
+        // dMenu writes integers as floats (e.g., "500.000000"), so we read as float and convert
+        auto ReadNumber = [](const wchar_t* section, const wchar_t* key, float defaultValue, const wchar_t* iniPath) -> float {
             wchar_t buffer[32];
             GetPrivateProfileStringW(section, key, L"", buffer, 32, iniPath);
             if (buffer[0] == L'\0') {
@@ -225,20 +256,20 @@ public:
         };
 
         // TextField
-        textFieldX = ReadFloat(L"TextField", L"fPositionX", 5.0f, path);
-        textFieldY = ReadFloat(L"TextField", L"fPositionY", 5.0f, path);
-        textFieldFontSize = GetPrivateProfileIntW(L"TextField", L"iFontSize", 20, path);
-        textFieldColor = GetPrivateProfileIntW(L"TextField", L"iTextColor", 0xFFFFFF, path);
+        textFieldX = ReadNumber(L"TextField", L"fPositionX", 5.0f, path);
+        textFieldY = ReadNumber(L"TextField", L"fPositionY", 5.0f, path);
+        textFieldFontSize = static_cast<int>(ReadNumber(L"TextField", L"iFontSize", 20.0f, path));
+        textFieldColor = static_cast<int>(ReadNumber(L"TextField", L"iTextColor", 16777215.0f, path));
 
         // TextInput
-        textInputWidth = GetPrivateProfileIntW(L"TextInput", L"iWidth", 500, path);
-        textInputHeight = GetPrivateProfileIntW(L"TextInput", L"iHeight", 400, path);
-        textInputFontSize = GetPrivateProfileIntW(L"TextInput", L"iFontSize", 14, path);
-        textInputAlignment = GetPrivateProfileIntW(L"TextInput", L"iAlignment", 0, path);
+        textInputWidth = static_cast<int>(ReadNumber(L"TextInput", L"iWidth", 500.0f, path));
+        textInputHeight = static_cast<int>(ReadNumber(L"TextInput", L"iHeight", 400.0f, path));
+        textInputFontSize = static_cast<int>(ReadNumber(L"TextInput", L"iFontSize", 14.0f, path));
+        textInputAlignment = static_cast<int>(ReadNumber(L"TextInput", L"iAlignment", 0.0f, path));
 
         // Hotkey
-        noteHotkeyScanCode = GetPrivateProfileIntW(L"Hotkey", L"iScanCode", 51, path);
-        quickAccessScanCode = GetPrivateProfileIntW(L"Hotkey", L"iQuickAccessScanCode", 52, path);
+        noteHotkeyScanCode = static_cast<int>(ReadNumber(L"Hotkey", L"iScanCode", 51.0f, path));
+        quickAccessScanCode = static_cast<int>(ReadNumber(L"Hotkey", L"iQuickAccessScanCode", 52.0f, path));
 
         // Validate and clamp loaded values to reasonable ranges
         textFieldX = std::clamp(textFieldX, 0.0f, 3840.0f);      // Max 4K width
@@ -254,7 +285,41 @@ public:
         noteHotkeyScanCode = std::clamp(noteHotkeyScanCode, 0, 255);  // Valid scan code range
         quickAccessScanCode = std::clamp(quickAccessScanCode, 0, 255);  // Valid scan code range
 
-        spdlog::info("[SETTINGS] Loaded and validated from INI");
+        // Update last modified timestamp
+        UpdateTimestamp();
+
+        spdlog::info("[SETTINGS] Loaded from INI");
+    }
+
+    /**
+     * @brief Reload settings if INI file has been modified.
+     * @return True if settings were reloaded, false if no change detected.
+     *
+     * Checks if PersonalNotes.ini has been modified since last load.
+     * If modified, reloads all settings. Used for runtime config changes via dMenu.
+     */
+    bool ReloadIfChanged() {
+        namespace fs = std::filesystem;
+
+        try {
+            fs::path iniPath = "Data/SKSE/Plugins/PersonalNotes.ini";
+
+            if (!fs::exists(iniPath)) {
+                return false;
+            }
+
+            auto currentTimestamp = fs::last_write_time(iniPath);
+
+            if (currentTimestamp != lastModifiedTime_) {
+                spdlog::info("[SETTINGS] INI changed, reloading");
+                LoadSettings();
+                return true;
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("[SETTINGS] Failed to check INI timestamp: {}", e.what());
+        }
+
+        return false;
     }
 
     // TextField
@@ -275,6 +340,28 @@ public:
 
 private:
     SettingsManager() = default;
+
+    /**
+     * @brief Update timestamp from INI file.
+     *
+     * Records the last modified time of PersonalNotes.ini for change detection.
+     */
+    void UpdateTimestamp() {
+        namespace fs = std::filesystem;
+
+        try {
+            fs::path iniPath = "Data/SKSE/Plugins/PersonalNotes.ini";
+
+            if (fs::exists(iniPath)) {
+                lastModifiedTime_ = fs::last_write_time(iniPath);
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("[SETTINGS] Failed to update INI timestamp: {}", e.what());
+        }
+    }
+
+    // INI file timestamp for change detection
+    std::filesystem::file_time_type lastModifiedTime_;
 };
 
 //=============================================================================
@@ -997,6 +1084,9 @@ private:
 //=============================================================================
 
 void JournalNoteHelper::OnJournalOpen() {
+    // Reload settings if INI was modified (dMenu changes)
+    SettingsManager::GetSingleton()->ReloadIfChanged();
+
     auto ui = RE::UI::GetSingleton();
     if (!ui) {
         spdlog::error("[HELPER] Failed to get UI singleton");
@@ -1423,8 +1513,9 @@ namespace PapyrusBridge {
         auto mgr = NoteManager::GetSingleton();
         std::string existingText = mgr->GetNoteForQuest(questID);
 
-        // Get TextInput settings
+        // Get TextInput settings (reload if changed)
         auto settings = SettingsManager::GetSingleton();
+        settings->ReloadIfChanged();
 
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
@@ -1436,8 +1527,8 @@ namespace PapyrusBridge {
             static_cast<std::int32_t>(settings->textInputFontSize),
             static_cast<std::int32_t>(settings->textInputAlignment)
         );
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
 
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
         vm->DispatchStaticCall("PersonalNotes", "ShowQuestNoteInput", args, callback);
     }
 
@@ -1482,8 +1573,9 @@ namespace PapyrusBridge {
         // Get existing general note text
         std::string existingText = NoteManager::GetSingleton()->GetGeneralNote();
 
-        // Get TextInput settings
+        // Get TextInput settings (reload if changed)
         auto settings = SettingsManager::GetSingleton();
+        settings->ReloadIfChanged();
 
         // Call Papyrus to show text input dialog
         auto args = RE::MakeFunctionArguments(
@@ -1567,8 +1659,9 @@ namespace PapyrusBridge {
             questIDs.push_back(static_cast<std::int32_t>(questID));
         }
 
-        // Get TextInput settings
+        // Get TextInput settings (reload if changed)
         auto settings = SettingsManager::GetSingleton();
+        settings->ReloadIfChanged();
 
         // Call Papyrus to show list menu
         auto args = RE::MakeFunctionArguments(
@@ -1581,8 +1674,8 @@ namespace PapyrusBridge {
             static_cast<std::int32_t>(settings->textInputFontSize),
             static_cast<std::int32_t>(settings->textInputAlignment)
         );
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
 
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
         vm->DispatchStaticCall("PersonalNotes", "ShowNotesListMenu", args, callback);
     }
 
@@ -1631,8 +1724,8 @@ void SetupLog() {
     auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(Paths::LOG_FILE, true);
     auto logger = std::make_shared<spdlog::logger>("log", std::move(sink));
     spdlog::set_default_logger(std::move(logger));
-    spdlog::set_level(spdlog::level::info);
-    spdlog::flush_on(spdlog::level::info);
+    spdlog::set_level(spdlog::level::debug); // Log all levels
+    spdlog::flush_on(spdlog::level::debug);
     spdlog::info("PersonalNotes v{}.{}.{} initialized",
                  PERSONAL_NOTES_VERSION_MAJOR,
                  PERSONAL_NOTES_VERSION_MINOR,

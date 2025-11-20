@@ -160,3 +160,13 @@ Built with:
 
 - **Issues**: Report on [Nexus Mods](https://www.nexusmods.com/skyrimspecialedition/mods/XXXXX) or [GitHub](https://github.com/yourusername/Skyrim-PersonalNotes/issues)
 - **Logs**: Check `Data/SKSE/Plugins/PersonalNotes/PersonalNotes.log` for errors
+
+## Open Source
+
+This mod is fully open source. The project consists of multiple repositories:
+
+- **[Skyrim-Modding](https://github.com/bainos/Skyrim-Modding)** - Main project repository with all components as submodules
+- **[Skyrim-ENBNighteyeFix](https://github.com/bainos/Skyrim-ENBNighteyeFix)** - SKSE plugin and ENB shader patch
+- **[commonlibsse-ng-ae-vcpkg](https://github.com/bainos/commonlibsse-ng-ae-vcpkg)** - Custom vcpkg registry with enb-api port
+- **[enb-api](https://github.com/bainos/enb-api)** - ENB Series SDK with CMake configuration
+- **[CommonLibSSE-NG](https://github.com/bainos/CommonLibSSE-NG)** - Fork updated to work with current dependency libraries (October 2025)
