@@ -65,6 +65,8 @@ namespace KeyCodes {
     // Keyboard scan codes
     constexpr uint32_t ARROW_UP = 200;
     constexpr uint32_t ARROW_DOWN = 208;
+    constexpr uint32_t PAGE_UP = 201;
+    constexpr uint32_t PAGE_DOWN = 209;
 
     // Mouse button codes
     constexpr uint32_t MOUSE_LEFT = 256;
@@ -1062,6 +1064,32 @@ public:
      */
     void UpdateTextField(RE::FormID questID, bool forceUpdate = false);
 
+    /**
+     * @brief Mark quest as keyboard-selected and update TextField.
+     * @param questID The quest selected via keyboard
+     */
+    void SetKeyboardSelection(RE::FormID questID) {
+        keyboardSelectedQuest_ = questID;
+        lastInputWasKeyboard_ = true;
+        UpdateTextField(questID);
+    }
+
+    /**
+     * @brief Update TextField for mouse hover (only if not keyboard-selected).
+     * @param questID The quest under mouse cursor
+     */
+    void UpdateMouseHover(RE::FormID questID) {
+        // If quest changed from keyboard selection, switch to mouse mode
+        if (questID != keyboardSelectedQuest_) {
+            lastInputWasKeyboard_ = false;
+        }
+
+        // Only update if not in keyboard mode, or if quest actually changed
+        if (!lastInputWasKeyboard_ || questID != lastQuestID_) {
+            UpdateTextField(questID);
+        }
+    }
+
 private:
     JournalNoteHelper() = default;
 
@@ -1076,7 +1104,9 @@ private:
     RE::GFxValue noteTextField_;
     RE::GFxValue textFormat_;
     RE::GPtr<RE::JournalMenu> journalMenu_;
-    RE::FormID lastQuestID_ = 0;  // Track last quest to detect changes
+    RE::FormID lastQuestID_ = 0;        // Track last quest to detect changes
+    RE::FormID keyboardSelectedQuest_ = 0;  // Track keyboard-selected quest
+    bool lastInputWasKeyboard_ = false;     // True if last selection was via keyboard
 };
 
 //=============================================================================
@@ -1163,7 +1193,9 @@ void JournalNoteHelper::OnJournalClose() {
     noteTextField_.SetUndefined();
     textFormat_.SetUndefined();
     journalMenu_ = nullptr;
-    lastQuestID_ = 0;  // Reset tracking
+    lastQuestID_ = 0;              // Reset tracking
+    keyboardSelectedQuest_ = 0;    // Reset keyboard selection
+    lastInputWasKeyboard_ = false;
 }
 
 void JournalNoteHelper::UpdateTextField(RE::FormID questID, bool forceUpdate) {
@@ -1352,14 +1384,22 @@ public:
                 }
 
                 if (inJournal) {
-                    // Update TextField on navigation RELEASE (arrow keys, mouse clicks)
+                    // Update TextField on navigation RELEASE (arrow keys, mouse clicks, page keys)
                     // Use IsUp() so Journal processes the input first, then we read the updated selection
                     if (buttonEvent->IsUp()) {
+                        RE::FormID questID = GetCurrentQuestInJournal();
+                        auto helper = JournalNoteHelper::GetSingleton();
+
+                        // Keyboard navigation - mark as keyboard selection
                         if (keyCode == KeyCodes::ARROW_UP ||
                             keyCode == KeyCodes::ARROW_DOWN ||
-                            keyCode == KeyCodes::MOUSE_LEFT) {
-                            RE::FormID questID = GetCurrentQuestInJournal();
-                            JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
+                            keyCode == KeyCodes::PAGE_UP ||
+                            keyCode == KeyCodes::PAGE_DOWN) {
+                            helper->SetKeyboardSelection(questID);
+                        }
+                        // Mouse click - regular update (switches back to mouse mode)
+                        else if (keyCode == KeyCodes::MOUSE_LEFT) {
+                            helper->UpdateTextField(questID);
                         }
                     }
                 }
@@ -1388,10 +1428,9 @@ public:
             // Handle mouse move events (hover detection in Journal)
             else if (eventType == RE::INPUT_EVENT_TYPE::kMouseMove) {
                 if (IsJournalCurrentlyOpen()) {
-                    // Mouse moved in Journal - check if quest selection changed
+                    // Mouse moved in Journal - update hover (respects keyboard selection)
                     RE::FormID questID = GetCurrentQuestInJournal();
-                    JournalNoteHelper::GetSingleton()->UpdateTextField(questID);
-                    // Note: UpdateTextField has built-in change detection to prevent spam
+                    JournalNoteHelper::GetSingleton()->UpdateMouseHover(questID);
                 }
             }
         }
