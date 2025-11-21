@@ -1,0 +1,284 @@
+{
+  "name": "Personal Notes Settings",
+  "ini": "Data\\SKSE\\Plugins\\PersonalNotes.ini",
+  "data": [
+    {
+      "type": "group",
+      "text": {
+        "name": "Hotkeys",
+        "desc": ""
+      },
+      "translation": {
+        "name": "",
+        "desc": ""
+      },
+      "control": {
+        "failAction": "disable"
+      },
+      "entries": [
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Add/Edit Note",
+            "desc": "Press this key to add or edit a note for the current quest.\nWorks in the Journal menu.\n\nNOTE: Changing hotkeys requires a game restart."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 51,
+          "ini": {
+            "section": "Hotkey",
+            "id": "iScanCode"
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Quick Access Menu",
+            "desc": "Press this key to open the quick access menu.\nView and manage all your notes, or export them to a file.\n\nNOTE: Changing hotkeys requires a game restart."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 52,
+          "ini": {
+            "section": "Hotkey",
+            "id": "iQuickAccessScanCode"
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "text": {
+        "name": "Journal Notification",
+        "desc": "Settings for the note preview shown in the Journal menu"
+      },
+      "translation": {
+        "name": "",
+        "desc": ""
+      },
+      "control": {
+        "failAction": "disable"
+      },
+      "entries": [
+        {
+          "type": "slider",
+          "text": {
+            "name": "Position X",
+            "desc": "Horizontal position of the notification text in the Journal menu."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 5.0,
+          "ini": {
+            "section": "TextField",
+            "id": "fPositionX"
+          },
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 1.0
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Position Y",
+            "desc": "Vertical position of the notification text in the Journal menu."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 5.0,
+          "ini": {
+            "section": "TextField",
+            "id": "fPositionY"
+          },
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 1.0
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Font Size",
+            "desc": "Font size for the journal notification text."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 20,
+          "ini": {
+            "section": "TextField",
+            "id": "iFontSize"
+          },
+          "style": {
+            "min": 8,
+            "max": 48,
+            "step": 1
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Text Color (Hex RGB)",
+            "desc": "Text color in hexadecimal RGB format.\nDefault: 0xFFFFFF (white)"
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 16777215,
+          "ini": {
+            "section": "TextField",
+            "id": "iTextColor"
+          },
+          "style": {
+            "min": 0,
+            "max": 16777215,
+            "step": 1
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "text": {
+        "name": "Note Editor",
+        "desc": "Settings for the note editor dialog"
+      },
+      "translation": {
+        "name": "",
+        "desc": ""
+      },
+      "control": {
+        "failAction": "disable"
+      },
+      "entries": [
+        {
+          "type": "slider",
+          "text": {
+            "name": "Width",
+            "desc": "Width of the note editor window."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 500,
+          "ini": {
+            "section": "TextInput",
+            "id": "iWidth"
+          },
+          "style": {
+            "min": 300,
+            "max": 1000,
+            "step": 10
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Height",
+            "desc": "Height of the note editor window."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 400,
+          "ini": {
+            "section": "TextInput",
+            "id": "iHeight"
+          },
+          "style": {
+            "min": 200,
+            "max": 800,
+            "step": 10
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Font Size",
+            "desc": "Font size for the note editor text."
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 14,
+          "ini": {
+            "section": "TextInput",
+            "id": "iFontSize"
+          },
+          "style": {
+            "min": 8,
+            "max": 32,
+            "step": 1
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Text Alignment",
+            "desc": "Text alignment in the note editor.\n0 = Left, 1 = Center, 2 = Right"
+          },
+          "translation": {
+            "name": "",
+            "desc": ""
+          },
+          "default": 0,
+          "ini": {
+            "section": "TextInput",
+            "id": "iAlignment"
+          },
+          "style": {
+            "min": 0,
+            "max": 2,
+            "step": 1
+          },
+          "control": {
+            "failAction": "disable"
+          }
+        }
+      ]
+    }
+  ]
+}

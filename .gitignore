@@ -9,6 +9,14 @@ build/
 dist/
 temp_package/
 
+# Mod distribution folder (ignore compiled outputs, keep source configs)
+mod/Scripts/*.pex
+mod/SKSE/Plugins/*.dll
+mod/SKSE/Plugins/*.log
+mod/SKSE/Plugins/*.ini
+# Keep source files:
+!mod/SKSE/Plugins/dmenu/
+
 # Claude Code
 .claude/
 
