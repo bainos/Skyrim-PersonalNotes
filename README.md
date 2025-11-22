@@ -83,22 +83,32 @@ Never forget quest details, item locations, or your personal reminders again. Pe
 
 ## Configuration
 
+### dMenu UI (Recommended)
+
+If you have **[dMenu](https://www.nexusmods.com/skyrimspecialedition/mods/123352)** installed, configure Personal Notes through its in-game UI:
+- Open dMenu > Personal Notes Settings
+- Adjust hotkeys, text size, alignment, and more
+- **Changes apply immediately** (except hotkeys - restart required)
+- No need to manually edit INI files
+
+### Manual Configuration
+
 Edit `Data/SKSE/Plugins/PersonalNotes.ini` to customize:
 
-### Hotkeys
+**Hotkeys:**
 ```ini
 [Hotkey]
 iScanCode=51              ; Comma key (add/edit notes)
 iQuickAccessScanCode=52   ; Dot key (quick access menu)
 ```
 
-### UI Customization
+**UI Customization:**
 ```ini
 [TextField]
 fPositionX=5.0            ; Journal notification X position
 fPositionY=5.0            ; Journal notification Y position
 iFontSize=20              ; Font size for journal notification
-iTextColor=0xFFFFFF       ; Text color (hex RGB)
+iTextColor=16777215       ; Text color (decimal RGB)
 
 [TextInput]
 iWidth=500                ; Note editor width
@@ -106,6 +116,8 @@ iHeight=400               ; Note editor height
 iFontSize=14              ; Note editor font size
 iAlignment=0              ; 0=left, 1=center, 2=right
 ```
+
+**Note**: Settings reload automatically when changed. Hotkeys require game restart.
 
 **Scan codes**: [DirectX Scan Code Reference](https://www.creationkit.com/index.php?title=Input_Script#DXScanCodes)
 
@@ -115,7 +127,7 @@ iAlignment=0              ; 0=left, 1=center, 2=right
 
 - **Plugin**: `Data/SKSE/Plugins/PersonalNotes.dll`
 - **Config**: `Data/SKSE/Plugins/PersonalNotes.ini`
-- **Logs**: `Data/SKSE/Plugins/PersonalNotes/PersonalNotes.log`
+- **Logs**: `Data/SKSE/Plugins/PersonalNotes.log`
 - **Backups**: `Data/SKSE/Plugins/PersonalNotes/backup/`
 - **Import**: `Data/SKSE/Plugins/PersonalNotes/import/notes.json`
 - **Saves**: Notes stored in SKSE co-save (`.skse` files alongside your saves)
@@ -159,7 +171,7 @@ Built with:
 ## Support
 
 - **Issues**: Report on [Nexus Mods](https://www.nexusmods.com/skyrimspecialedition/mods/XXXXX) or [GitHub](https://github.com/yourusername/Skyrim-PersonalNotes/issues)
-- **Logs**: Check `Data/SKSE/Plugins/PersonalNotes/PersonalNotes.log` for errors
+- **Logs**: Check `Data/SKSE/Plugins/PersonalNotes.log` for errors
 
 ## Open Source
 

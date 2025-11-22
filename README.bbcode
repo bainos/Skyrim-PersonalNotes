@@ -1,0 +1,210 @@
+[center][size=6][b]Personal Notes[/b][/size]
+[b]An in-game note-taking system for Skyrim SE/AE[/b]
+
+Never forget quest details, item locations, or your personal reminders again. Personal Notes lets you write and manage notes directly in-game, with full backup support.[/center]
+
+[line]
+
+[size=5][b]Features[/b][/size]
+
+[size=4][b]Quest Notes[/b][/size]
+[list]
+[*][b]Press [font=Courier New],[/font] (comma) while viewing a quest[/b] in the Journal Menu to add or edit a note
+[*]Notes are tied to specific quests - perfect for tracking objectives, locations, or tips
+[*]Visual indicator shows "Press , to add note" or "Press , to edit note"
+[/list]
+
+[size=4][b]General Notes[/b][/size]
+[list]
+[*][b]Press [font=Courier New],[/font] (comma) during gameplay[/b] to create notes not tied to any quest
+[*]Great for shopping lists, general reminders, or anything else
+[*]Access from anywhere in the game world
+[/list]
+
+[size=4][b]Quick Access & Backup[/b][/size]
+[list]
+[*][b]Press [font=Courier New].[/font] (dot) during gameplay[/b] to view all your notes in one list
+[*]Browse all quest and general notes with previews
+[*][b]Export all notes to JSON[/b] with one click from the quick access menu
+[*]Automatic backup with timestamp and character name: [font=Courier New]Dragonborn_notes_2025-11-17_14-30-00.json[/font]
+[*]Import notes from backup to restore or transfer to another character
+[/list]
+
+[size=4][b]Persistence[/b][/size]
+[list]
+[*]Notes automatically save with your game (SKSE co-save system)
+[*]Each character has separate notes
+[*]Notes persist across all your saves for that character
+[*]Never lose your notes when loading or saving
+[/list]
+
+[line]
+
+[size=5][b]Requirements[/b][/size]
+
+[list]
+[*][b]Skyrim SE/AE[/b] (1.5.97 or 1.6.x)
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/30379][b]SKSE64[/b][/url]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/32444][b]Address Library for SKSE[/b][/url]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/107512][b]Extended Vanilla Menus[/b][/url]
+[/list]
+
+[line]
+
+[size=5][b]Installation[/b][/size]
+
+[list=1]
+[*]Install requirements (SKSE, Address Library, Extended Vanilla Menus)
+[*]Install Personal Notes with your mod manager
+[*]Launch game via SKSE
+[/list]
+
+[b]Manual Installation:[/b]
+[list]
+[*]Extract to [font=Courier New]Data/[/font] folder
+[*]Files go to: [font=Courier New]Data/SKSE/Plugins/[/font], [font=Courier New]Data/Scripts/[/font]
+[/list]
+
+[line]
+
+[size=5][b]Configuration[/b][/size]
+
+[size=4][b]dMenu UI (Recommended)[/b][/size]
+
+If you have [url=https://www.nexusmods.com/skyrimspecialedition/mods/123352][b]dMenu[/b][/url] installed, configure Personal Notes through its in-game UI:
+[list]
+[*]Open dMenu > Personal Notes Settings
+[*]Adjust hotkeys, text size, alignment, and more
+[*][b]Changes apply immediately[/b] (except hotkeys - restart required)
+[*]No need to manually edit INI files
+[/list]
+
+[size=4][b]Manual Configuration[/b][/size]
+
+Edit [font=Courier New]Data/SKSE/Plugins/PersonalNotes.ini[/font] to customize:
+
+[b]Hotkeys:[/b]
+[code]
+[Hotkey]
+iScanCode=51              ; Comma key (add/edit notes)
+iQuickAccessScanCode=52   ; Dot key (quick access menu)
+[/code]
+
+[b]UI Customization:[/b]
+[code]
+[TextField]
+fPositionX=5.0            ; Journal notification X position
+fPositionY=5.0            ; Journal notification Y position
+iFontSize=20              ; Font size for journal notification
+iTextColor=16777215       ; Text color (decimal RGB)
+
+[TextInput]
+iWidth=500                ; Note editor width
+iHeight=400               ; Note editor height
+iFontSize=14              ; Note editor font size
+iAlignment=0              ; 0=left, 1=center, 2=right
+[/code]
+
+[b]Note:[/b] Settings reload automatically when changed. Hotkeys require game restart.
+
+[url=https://www.creationkit.com/index.php?title=Input_Script#DXScanCodes][b]DirectX Scan Code Reference[/b][/url]
+
+[line]
+
+[size=5][b]Usage[/b][/size]
+
+[size=4][b]Taking Notes[/b][/size]
+[list=1]
+[*][b]For Quest Notes:[/b] Open Journal Menu > Select a quest > Press [font=Courier New],[/font] (comma)
+[*][b]For General Notes:[/b] During gameplay > Press [font=Courier New],[/font] (comma)
+[*]Type your note in the text dialog
+[*]Submit to save (or leave blank to delete)
+[/list]
+
+[size=4][b]Viewing All Notes[/b][/size]
+[list=1]
+[*]Press [font=Courier New].[/font] (dot) during gameplay
+[*]Browse the list with previews
+[*]Select a note to edit it
+[*]Or select "--- Export All Notes ---" to create a backup
+[/list]
+
+[size=4][b]Backup & Restore[/b][/size]
+
+[b]Export:[/b]
+[list]
+[*]Press [font=Courier New].[/font] (dot) > Select "--- Export All Notes ---"
+[*]Backup saved to: [font=Courier New]Data/SKSE/Plugins/PersonalNotes/backup/[/font]
+[*]Filename format: [font=Courier New]<CharacterName>_notes_<timestamp>.json[/font]
+[/list]
+
+[b]Import:[/b]
+[list]
+[*]Copy a backup JSON file to: [font=Courier New]Data/SKSE/Plugins/PersonalNotes/import/notes.json[/font]
+[*]Load any save > notes automatically imported and merged
+[*]Import file is deleted after successful import
+[/list]
+
+[line]
+
+[size=5][b]File Locations[/b][/size]
+
+[list]
+[*][b]Plugin:[/b] [font=Courier New]Data/SKSE/Plugins/PersonalNotes.dll[/font]
+[*][b]Config:[/b] [font=Courier New]Data/SKSE/Plugins/PersonalNotes.ini[/font]
+[*][b]Logs:[/b] [font=Courier New]Data/SKSE/Plugins/PersonalNotes.log[/font]
+[*][b]Backups:[/b] [font=Courier New]Data/SKSE/Plugins/PersonalNotes/backup/[/font]
+[*][b]Import:[/b] [font=Courier New]Data/SKSE/Plugins/PersonalNotes/import/notes.json[/font]
+[*][b]Saves:[/b] Notes stored in SKSE co-save ([font=Courier New].skse[/font] files alongside your saves)
+[/list]
+
+[line]
+
+[size=5][b]Tips[/b][/size]
+
+[list]
+[*][b]Empty notes are deleted[/b] - leave the text blank and submit to remove a note
+[*][b]Backup regularly[/b] - use quick access to export your notes
+[*][b]Transfer notes[/b] - export from one character, import to another
+[*][b]Each character is isolated[/b] - starting a new game gives you a fresh slate
+[*][b]Notes are per-save[/b] - each character's saves share the same notes
+[/list]
+
+[line]
+
+[size=5][b]Compatibility[/b][/size]
+
+[list]
+[*][b]No conflicts[/b] - uses SKSE co-save system, no ESP/ESM file
+[*][b]Safe to install/uninstall[/b] mid-playthrough
+[*]Works with any quest mod or load order
+[/list]
+
+[b]Note:[/b] Some mods with hotkeys (e.g., Wheeler) may still trigger when editing notes. This is because those mods don't check for modal dialogs. Personal Notes blocks its own hotkeys correctly when the note editor is open.
+
+[line]
+
+[size=5][b]Credits[/b][/size]
+
+Built with:
+[list]
+[*][b]CommonLibSSE-NG[/b] - SKSE plugin framework
+[*][b]Extended Vanilla Menus[/b] - UI dialogs and menus
+[/list]
+
+[line]
+
+[size=5][b]Support[/b][/size]
+
+[list]
+[*][b]Logs:[/b] Check [font=Courier New]Data/SKSE/Plugins/PersonalNotes.log[/font] for errors
+[/list]
+
+[line]
+
+[size=5][b]Open Source[/b][/size]
+
+This mod is fully open source:
+[list]
+[*][url=https://github.com/bainos/Skyrim-Modding][b]Main Repository[/b][/url]
+[/list]
